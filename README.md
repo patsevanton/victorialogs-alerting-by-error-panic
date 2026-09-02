@@ -47,12 +47,6 @@ flowchart LR
 
 Ключевые файлы: [`k8s.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/k8s.tf), [`net.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/net.tf), [`ip-dns.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/ip-dns.tf), [`versions.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/versions.tf).
 
-Перед установкой применяется PriorityClass:
-
-```bash
-kubectl apply -f priority-class.yaml
-```
-
 Values для vmks генерируются из шаблона [`values/vmks-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vmks-values.yaml.tftpl) через Terraform `templatefile` (`monitoring.tf`); FQDN Grafana/Alertmanager формируются из публичного IP Traefik (`terraform output ingress_public_ip`).
 
 ### Версии компонентов
@@ -94,10 +88,9 @@ server:
     requests:
       cpu: 100m
       memory: 128Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
-  priorityClassName: monitoring-critical
+  limits:
+    cpu: "1"
+    memory: 1Gi
 ```
 
 Сервис получит имя `vls-server.vmks.svc.cluster.local` (порт 9428) — именно на него будут смотреть и `vlagent`, и `vmalert`, и datasource Grafana.
@@ -133,8 +126,6 @@ resources:
   limits:
     cpu: 200m
     memory: 256Mi
-
-priorityClassName: monitoring-critical
 ```
 
 `includePodLabels: true` — критично для алертов: каждый лог получает поля `kubernetes.pod_labels.app`, по которым правила отличают `golang-app` от `nuxt-app`. `_stream`-полями по умолчанию становятся `kubernetes.container_name`, `kubernetes.pod_name`, `kubernetes.pod_namespace` — это даёт быструю фильтрацию и группировку в LogsQL.
