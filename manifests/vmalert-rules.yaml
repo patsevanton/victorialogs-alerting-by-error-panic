@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vmalert-rules
+  namespace: vmks
+data:
+  alert-rules.yaml: |
+    groups:
+      - name: golang-app
+        type: vlogs
+        interval: 1m
+        rules:
+          - alert: GolangPanicDetected
+            # "panic:" есть и у явного panic("..."), и у runtime-паник
+            # (nil pointer dereference, index out of range) — ловим все разом.
+            expr: |
+              kubernetes.pod_labels.app:=golang-app
+                | _msg:~"panic:"
+                | stats by (kubernetes.pod_name) count() as panics
+                | filter panics:>0
+            for: 1m
+            labels:
+              severity: critical
+              app: golang-app
+            annotations:
+              summary: "panic в golang-app"
+              description: |
+                Паник у пода {{ index $labels "kubernetes.pod_name" }} за 1m: {{ $value }}.
+                Логи: Kubernetes -> vlagent -> VictoriaLogs.
+
+          - alert: GolangFatalLog
+            expr: |
+              kubernetes.pod_labels.app:=golang-app
+                | _msg:~"FATAL"
+                | stats count() as fatals
+                | filter fatals:>0
+            for: 1m
+            labels:
+              severity: critical
+              app: golang-app
+            annotations:
+              summary: "log.Fatal в golang-app"
+              description: |
+                Вызов log.Fatalf в golang-app. Фаталов за 1m: {{ $value }}.
+
+          - alert: GolangErrorLog
+            expr: |
+              kubernetes.pod_labels.app:=golang-app
+                | _msg:~"ERROR"
+                | stats count() as errors
+                | filter errors:>0
+            for: 2m
+            labels:
+              severity: warning
+              app: golang-app
+            annotations:
+              summary: "ошибка в golang-app"
+              description: "Ошибок в логах golang-app за 1m: {{ $value }}."
+
+      - name: nuxt-app
+        type: vlogs
+        interval: 1m
+        rules:
+          - alert: NuxtServerError
+            expr: |
+              kubernetes.pod_labels.app:=nuxt-app
+                | _msg:~"NUXT_ERROR"
+                | stats count() as errors
+                | filter errors:>0
+            for: 2m
+            labels:
+              severity: warning
+              app: nuxt-app
+            annotations:
+              summary: "500 в nuxt-app"
+              description: "Серверных ошибок (500) в nuxt-app за 1m: {{ $value }}."
+
+          - alert: NuxtUnhandledRejection
+            expr: |
+              kubernetes.pod_labels.app:=nuxt-app
+                | _msg:~"NUXT_UNHANDLED"
+                | stats count() as unhandled
+                | filter unhandled:>0
+            for: 1m
+            labels:
+              severity: critical
+              app: nuxt-app
+            annotations:
+              summary: "необработанное исключение в nuxt-app"
+              description: |
+                Необработанных исключений в nuxt-app за 1m: {{ $value }}.

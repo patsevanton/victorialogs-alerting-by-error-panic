@@ -42,3 +42,15 @@ terraform.rc
 # Optional: ignore plan files saved before destroying Terraform configuration
 # Uncomment the line below if you want to ignore planout files.
 # planout
+
+# Значения генерируются из values/*.tftpl через Terraform (monitoring.tf)
+vmks-values.yaml
+
+# Сгенерированный манифест секрета Telegram (содержит токен)
+telegram-bot-token-secret.yaml
+
+# Сборки приложений
+apps/golang-app/crash-app
+apps/nuxt-app/node_modules/
+apps/nuxt-app/.output/
+apps/nuxt-app/.nuxt/
