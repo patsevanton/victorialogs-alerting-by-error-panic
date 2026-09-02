@@ -6,18 +6,30 @@ import (
 	"os"
 )
 
+var (
+	// infoLog пишет обычные сообщения (старт сервиса, health и т.п.) в stdout —
+	// их собирает vlagent как штатный поток логов приложения.
+	infoLog = log.New(os.Stdout, "", log.LstdFlags)
+
+	// errLog пишет panic / fatal / error в stderr. Разделение потоков нужно,
+	// чтобы vlagent и далее vmalert могли надёжно отличать ошибки от
+	// обычных логов по stream (stderr vs stdout), а не только по тексту.
+	errLog = log.New(os.Stderr, "", log.LstdFlags)
+)
+
 // Приложение с набором эндпоинтов, каждый из которых воспроизводит
-// реальный класс ошибок в проде. Все сообщения пишутся в stdout —
-// vlagent собирает их и отправляет в VictoriaLogs.
+// реальный класс ошибок в проде. Обычные логи уходят в stdout,
+// ошибки (panic / fatal / error) — в stderr. vlagent собирает оба
+// потока и отправляет их в VictoriaLogs.
 func main() {
 	mux := http.NewServeMux()
 
-	// panic("...") — обрабатывается в defer/recover, но в лог попадает
-	// стек и сообщение через log.Printf.
+	// panic("...") — обрабатывается в defer/recover, но в stderr попадает
+	// стек и сообщение через errLog.Printf.
 	mux.HandleFunc("/panic", func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				log.Printf("ERROR: recovered panic on /panic: %v", rec)
+				errLog.Printf("ERROR: recovered panic on /panic: %v", rec)
 				http.Error(w, "internal failure", http.StatusInternalServerError)
 			}
 		}()
@@ -38,13 +50,14 @@ func main() {
 	})
 
 	// log.Fatal — пишет сообщение и завершает процесс (os.Exit(1)).
+	// Сообщение уходит в stderr (через errLog.Fatal), обычный infoLog не трогается.
 	mux.HandleFunc("/fatal", func(w http.ResponseWriter, r *http.Request) {
-		log.Fatalf("FATAL: unrecoverable configuration error on /fatal")
+		errLog.Fatalf("FATAL: unrecoverable configuration error on /fatal")
 	})
 
-	// Логируемая ошибка без падения — просто ERROR в логе.
+	// Логируемая ошибка без падения — ERROR в stderr, ответ 502 клиенту.
 	mux.HandleFunc("/error", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("ERROR: failed to connect to upstream on /error")
+		errLog.Printf("ERROR: failed to connect to upstream on /error")
 		http.Error(w, "upstream failure", http.StatusBadGateway)
 	})
 
@@ -54,9 +67,9 @@ func main() {
 	})
 
 	srv := &http.Server{Addr: ":8080", Handler: mux}
-	log.Printf("crash-app listening on :8080")
+	infoLog.Printf("crash-app listening on :8080")
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Printf("FATAL: %v", err)
+		errLog.Printf("FATAL: %v", err)
 		os.Exit(1)
 	}
 }
