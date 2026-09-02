@@ -1,4 +1,7 @@
 # Values для встроенного vmalert из victoria-metrics-k8s-stack.
+# Генерируется Terraform'ом из values/vmks-values.yaml.tftpl через templatefile()
+# (monitoring.tf). Параметры приходят из local.* / var.*.
+#
 # Правила читаются из файла (ConfigMap `vmalert-rules`), datasource — VictoriaLogs.
 #
 # vmalert пишет состояние алертов (ALERTS, ALERTS_FOR_STATE) в VictoriaMetrics:
@@ -22,7 +25,7 @@ grafana:
     enabled: true
     ingressClassName: traefik
     hosts:
-      - grafana.${ingress_public_ip}.sslip.io
+      - ${grafana_fqdn}
 
 defaultDatasources:
   victoriametrics:
@@ -40,7 +43,7 @@ defaultDatasources:
       isDefault: false
       uid: VictoriaLogs
       type: victoriametrics-logs-datasource
-      url: http://vls-server.vmks.svc.cluster.local:9428
+      url: ${vls_server_url}
 
 # Отключаем контроль control-plane: Yandex Managed K8s master вне кластера.
 kubeControllerManager:
@@ -65,11 +68,11 @@ vmsingle:
   spec:
     # VictoriaLogs сам метрики не хранит, поэтому vmalert пишет состояние
     # алертов сюда. Достаточно single-node.
-    retentionPeriod: "14d"
+    retentionPeriod: "${vmks_retention}"
     storage:
       resources:
         requests:
-          storage: 20Gi
+          storage: ${vmks_pv_size}
 
 vmcluster:
   enabled: false
@@ -82,7 +85,7 @@ vmalert:
     evaluationInterval: 1m
     # datasource = VictoriaLogs (read endpoint). Запросы LogsQL уходят на :9428.
     datasource:
-      url: "http://vls-server.vmks.svc.cluster.local:9428"
+      url: "${vls_server_url}"
     # Монтируем ConfigMap vmalert-rules в /etc/vm/configs/vmalert-rules.
     configMaps:
       - vmalert-rules
@@ -101,7 +104,7 @@ alertmanager:
     enabled: true
     ingressClassName: traefik
     hosts:
-      - alertmanager.${ingress_public_ip}.sslip.io
+      - ${alertmanager_fqdn}
   config:
     global:
       resolve_timeout: 5m

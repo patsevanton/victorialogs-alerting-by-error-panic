@@ -1,8 +1,8 @@
 # TODO
 
-- [ ] Перейти с отдельного чарта `victoria-metrics-alert` на `victoria-metrics-k8s-stack` (встроенный vmalert): убрать `helm_release` для `victoria-metrics-alert`, дропнуть `values/vma-values.yaml` и связанные ссылки из README.md; правила и datasource на VictoriaLogs уже описаны в `values/vmks-values.yaml.tftpl`.
+- [x] Перейти с отдельного чарта `victoria-metrics-alert` на `victoria-metrics-k8s-stack` (встроенный vmalert): дропнуть `values/vma-values.yaml` и связанные ссылки из README.md; правила и datasource на VictoriaLogs описаны в `values/vmks-values.yaml.tftpl`.
 
-- [ ] Для всех values yaml (`vmks-values.yaml`, `vlc-values.yaml`, `vls-values.yaml`, `vma-values.yaml`) должны существовать шаблоны `*.yaml.tftpl` в каталоге `values/`, из которых Terraform-ресурс `helm_release` создаёт соответствующий `values yaml` через `templatefile()`. На данный момент шаблон есть только для `vmks-values.yaml.tftpl`; остальные values лежат в виде статических yaml-файлов и должны быть переведены в tftpl-форму с пробросом параметров через `local.*` / `var.*` (FQDN Grafana/Alertmanager, имя release, namespace, retention, размеры PV, ресурсы, теги Telegram и т.п.).
+- [x] Для всех values yaml (`vmks-values.yaml`, `vlc-values.yaml`, `vls-values.yaml`) существуют шаблоны `*.yaml.tftpl` в каталоге `values/`, из которых Terraform через `templatefile()` (`monitoring.tf`) генерирует соответствующий `values yaml` на диск (`local_file`). Параметры пробрасываются через `local.*` / `var.*` (FQDN Grafana/Alertmanager, имя release, namespace, retention, размеры PV, ресурсы, теги Telegram).
 
 Пример манифеста для vmalert через `kind: VMRule` (Operator вместо ConfigMap):
 

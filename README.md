@@ -47,7 +47,7 @@ flowchart LR
 
 Ключевые файлы: [`k8s.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/k8s.tf), [`net.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/net.tf), [`ip-dns.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/ip-dns.tf), [`versions.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/versions.tf).
 
-Values для vmks генерируются из шаблона [`values/vmks-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vmks-values.yaml.tftpl) через Terraform `templatefile` (`monitoring.tf`); FQDN Grafana/Alertmanager формируются из публичного IP Traefik (`terraform output ingress_public_ip`).
+Все values (`vmks`, `vls`, `vlc`) генерируются Terraform'ом из шаблонов `values/*.yaml.tftpl` через `templatefile` (`monitoring.tf`) в файлы `vmks-values.yaml`, `vls-values.yaml`, `vlc-values.yaml` (в git они не попадают — `.gitignore`). Параметры пробрасываются через `local.*` / `var.*`, FQDN Grafana/Alertmanager формируются из публичного IP Traefik (`terraform output ingress_public_ip`).
 
 ### Версии компонентов
 
@@ -58,11 +58,10 @@ Values для vmks генерируются из шаблона [`values/vmks-va
 | vmks                  | victoria-metrics-k8s-stack       | 0.91.2 |
 | VictoriaLogs         | victoria-logs-single             | 0.13.9 |
 | vlagent              | victoria-logs-collector          | 0.3.7  |
-| отдельный vmalert    | victoria-metrics-alert           | 0.47.0 |
 
 ## Шаг 1. VictoriaLogs
 
-Ставим single-node VictoriaLogs отдельным чартом в namespace `vmks` (там же будет весь стек). Values — [`values/vls-values.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vls-values.yaml):
+Ставим single-node VictoriaLogs отдельным чартом в namespace `vmks` (там же будет весь стек). Values генерируются Terraform'ом из [`values/vls-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vls-values.yaml.tftpl) в файл `vls-values.yaml`:
 
 ```bash
 helm repo add vm https://victoriametrics.github.io/helm-charts/
@@ -71,47 +70,47 @@ helm repo update
 helm upgrade --install vls vm/victoria-logs-single \
   --namespace vmks --create-namespace \
   --version 0.13.9 \
-  --values values/vls-values.yaml
+  --values vls-values.yaml
 ```
 
 ```yaml
-# values/vls-values.yaml
-nameOverride: vls
+# values/vls-values.yaml.tftpl (рендерится в vls-values.yaml)
+nameOverride: ${vls_name_override}
 
 server:
-  retentionPeriod: 14d
+  retentionPeriod: ${vls_retention}
   persistentVolume:
     enabled: true
-    storageClassName: yc-network-ssd
-    size: 20Gi
+    storageClassName: ${vls_storage_class}
+    size: ${vls_pv_size}
   resources:
     requests:
-      cpu: 100m
-      memory: 128Mi
+      cpu: ${vls_cpu_request}
+      memory: ${vls_memory_request}
   limits:
-    cpu: "1"
-    memory: 1Gi
+    cpu: "${vls_cpu_limit}"
+    memory: ${vls_memory_limit}
 ```
 
 Сервис получит имя `vls-server.vmks.svc.cluster.local` (порт 9428) — именно на него будут смотреть и `vlagent`, и `vmalert`, и datasource Grafana.
 
 ## Шаг 2. vlagent
 
-Собираем логи всех подов через DaemonSet `vlagent`. Values — [`values/vlc-values.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vlc-values.yaml):
+Собираем логи всех подов через DaemonSet `vlagent`. Values генерируются Terraform'ом из [`values/vlc-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vlc-values.yaml.tftpl) в файл `vlc-values.yaml`:
 
 ```bash
 helm upgrade --install vlc vm/victoria-logs-collector \
   --namespace vmks \
   --version 0.3.7 \
-  --values values/vlc-values.yaml
+  --values vlc-values.yaml
 ```
 
 ```yaml
-# values/vlc-values.yaml
-nameOverride: vlc
+# values/vlc-values.yaml.tftpl (рендерится в vlc-values.yaml)
+nameOverride: ${vlc_name_override}
 
 remoteWrite:
-  - url: http://vls-server.vmks.svc.cluster.local:9428
+  - url: ${vls_server_url}
 
 collector:
   # Лейблы пода попадают в kubernetes.pod_labels.* — по ним фильтруют алерты.
@@ -121,11 +120,11 @@ collector:
 
 resources:
   requests:
-    cpu: 50m
-    memory: 64Mi
+    cpu: ${vlc_cpu_request}
+    memory: ${vlc_memory_request}
   limits:
-    cpu: 200m
-    memory: 256Mi
+    cpu: ${vlc_cpu_limit}
+    memory: ${vlc_memory_limit}
 ```
 
 `includePodLabels: true` — критично для алертов: каждый лог получает поля `kubernetes.pod_labels.app`, по которым правила отличают `golang-app` от `nuxt-app`. `_stream`-полями по умолчанию становятся `kubernetes.container_name`, `kubernetes.pod_name`, `kubernetes.pod_namespace` — это даёт быструю фильтрацию и группировку в LogsQL.
@@ -200,7 +199,7 @@ kubectl apply -f manifests/nuxt-app.yaml
 
 ## Шаг 4. Правила алертов в файле
 
-Правила — это ConfigMap `vmalert-rules` ([`manifests/vmalert-rules.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules.yaml)). Один и тот же файл используется обоими вариантами vmalert — встроенным из vmks и отдельным чартом.
+Правила — это ConfigMap `vmalert-rules` ([`manifests/vmalert-rules.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules.yaml)), который использует встроенный vmalert из vmks.
 
 ```yaml
 apiVersion: v1
@@ -276,9 +275,9 @@ data:
 
 `stats`-pipe обязателен: `vmalert` забирает из VictoriaLogs не сами строки, а результаты `/select/logsql/stats_query` (счётчики, гистограммы и т.д.) в формате Prometheus API — именно их он сравнивает с порогом.
 
-## Шаг 5. Вариант 1 — встроенный vmalert из vmks
+## Шаг 5. Встроенный vmalert из vmks
 
-Это основной вариант: `vmalert` приходит вместе с `victoria-metrics-k8s-stack`, и мы только перенаправляем его datasource на VictoriaLogs и подключаем файл правил.
+`vmalert` приходит вместе с `victoria-metrics-k8s-stack`, и мы только перенаправляем его datasource на VictoriaLogs и подключаем файл правил.
 
 ```bash
 # Секрет с токеном Telegram-бота (нужен Alertmanager'у).
@@ -298,14 +297,14 @@ helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-m
 Ключевые части [`values/vmks-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vmks-values.yaml.tftpl):
 
 ```yaml
-# datasource VictoriaLogs
+# datasource VictoriaLogs (${vls_server_url} подставляется Terraform'ом)
 vmalert:
   enabled: true
   spec:
     selectAllByDefault: false
     evaluationInterval: 1m
     datasource:
-      url: "http://vls-server.vmks.svc.cluster.local:9428"
+      url: "${vls_server_url}"
     configMaps:
       - vmalert-rules
     extraArgs:
@@ -326,11 +325,11 @@ vmalert:
 vmsingle:
   enabled: true
   spec:
-    retentionPeriod: "14d"
+    retentionPeriod: "${vmks_retention}"
     storage:
       resources:
         requests:
-          storage: 20Gi
+          storage: ${vmks_pv_size}
 ```
 
 `remoteWrite`/`remoteRead` чарт настраивает автоматически на `vmsingle` (`vmalert` пишет `ALERTS`/`ALERTS_FOR_STATE` и восстанавливает состояние при рестарте).
@@ -352,49 +351,7 @@ grafana:
 
 Здесь два независимых флага: `[alerting] enabled` (legacy-движок) и `[unified_alerting] enabled` (новый движок Grafana Alerting). Оба выключены — алерты управляются только файлом правил и `vmalert`, никакого расхождения с Grafana UI. Datasource VictoriaLogs добавляем через плагин `victoriametrics-logs-datasource` и `defaultDatasources.extra` с явным URL.
 
-## Шаг 6. Вариант 2 — отдельный чарт victoria-metrics-alert
-
-Если не хочется трогать встроенный `vmalert` из vmks, можно поднять отдельный экземпляр чартом `victoria-metrics-alert` — с тем же файлом правил.
-
-```bash
-helm upgrade --install vma vm/victoria-metrics-alert \
-  --namespace vmks \
-  --version 0.47.0 \
-  --values values/vma-values.yaml
-```
-
-```yaml
-# values/vma-values.yaml
-nameOverride: vma
-
-server:
-  datasource:
-    url: "http://vls-server.vmks.svc.cluster.local:9428"
-  notifier:
-    url: "http://vmalertmanager-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:9093"
-  remoteWrite:
-    url: "http://vmsingle-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:8428/api/v1/write"
-  remoteRead:
-    url: "http://vmsingle-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:8428"
-  configMap: vmalert-rules
-  extraArgs:
-    rule: "/config/alert-rules.yaml"
-    rule.defaultRuleType: vlogs
-
-alertmanager:
-  enabled: false
-```
-
-Отличия от варианта 1:
-
-- `datasource` и `notifier` задаются явно (это plain-chart, без operator'а);
-- `remoteWrite`/`remoteRead` тоже явные — `vmsingle` из vmks;
-- `configMap: vmalert-rules` монтирует тот же ConfigMap, но по пути `/config/alert-rules.yaml` (поэтому `rule` указывает на него);
-- `alertmanager.enabled: false` — используем Alertmanager из vmks, а не встроенный.
-
-**Какой вариант выбрать**: вариант 1 проще (меньше компонентов, оператор сам следит за lifecycle и монтирует ConfigMap), вариант 2 даёт изоляцию — отдельный `vmalert` только под логи, со своим циклом оценки, ресурсами и обновлениями. Правила и Alertmanager при этом общие.
-
-## Шаг 7. Alertmanager → Telegram напрямую
+## Шаг 6. Alertmanager → Telegram напрямую
 
 Prometheus Alertmanager умеет нативный `telegram_configs`, поэтому bridge не нужен. Токен кладём в Secret — манифест рендерится Terraform'ом из шаблона [`manifests/telegram-bot-token-secret.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/telegram-bot-token-secret.yaml.tftpl), а в конфиг передаём путь к нему через `bot_token_file` — токен не светится в конфиге.
 
@@ -512,17 +469,6 @@ panic в golang-app
 Паник у пода golang-app-7d9c6b4f5-x2k9p за 1m: 3.
 ```
 
-## Сравнение: два способа подключить vmalert к VictoriaLogs
-
-| Критерий                  | Вариант 1: встроенный vmalert (vmks)        | Вариант 2: отдельный victoria-metrics-alert |
-| ------------------------- | ------------------------------------------- | ------------------------------------------- |
-| Управление                | через operator (VMAlert CRD)                | plain Deployment через Helm                 |
-| Правила                   | `configMaps` + `extraArgs.rule`             | `configMap` + `extraArgs.rule`              |
-| datasource                | `spec.datasource.url`                       | `server.datasource.url`                     |
-| remoteWrite/remoteRead    | авто на `vmsingle`                          | явно в values                               |
-| Изоляция                  | общий vmalert под метрики и логи            | отдельный процесс только под логи           |
-| Обновления                | вместе с чартом vmks                        | независимо                                   |
-
 ## Важные оговорки
 
 - **VictoriaLogs не хранит метрики.** `vmalert` пишет состояние алертов в `vmsingle` (VictoriaMetrics) через `remoteWrite`/`remoteRead`. Без этого состояние не переживёт рестарт `vmalert`.
@@ -535,7 +481,7 @@ panic в golang-app
 
 ## Заключение
 
-Мы получили алертинг, который срабатывает на сам факт появления ошибки в логах — `panic`, `log.Fatal`, 500-я или необработанное исключение — и шлёт его в Telegram без промежуточных сервисов. Правила живут в одном файле-ConfigMap, datasource — VictoriaLogs, управление алертами через Grafana UI отключено, а `vmalert` можно взять либо встроенный из vmks, либо отдельным чартом с теми же правилами.
+Мы получили алертинг, который срабатывает на сам факт появления ошибки в логах — `panic`, `log.Fatal`, 500-я или необработанное исключение — и шлёт его в Telegram без промежуточных сервисов. Правила живут в одном файле-ConfigMap, datasource — VictoriaLogs, управление алертами через Grafana UI отключено, а `vmalert` взят встроенный из vmks.
 
 Это та же связка, которую команды используют для метрик, но применённая к логам: `vmalert` исполняет LogsQL вместо PromQL, а Alertmanager остаётся общим — так метрики и логи сводятся в один поток уведомлений.
 

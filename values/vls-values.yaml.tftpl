@@ -1,0 +1,18 @@
+# VictoriaLogs single-node.
+# Генерируется Terraform'ом из values/vls-values.yaml.tftpl через templatefile()
+# (monitoring.tf). Параметры приходят из local.*.
+nameOverride: ${vls_name_override}
+
+server:
+  retentionPeriod: ${vls_retention}
+  persistentVolume:
+    enabled: true
+    storageClassName: ${vls_storage_class}
+    size: ${vls_pv_size}
+  resources:
+    requests:
+      cpu: ${vls_cpu_request}
+      memory: ${vls_memory_request}
+    limits:
+      cpu: "${vls_cpu_limit}"
+      memory: ${vls_memory_limit}

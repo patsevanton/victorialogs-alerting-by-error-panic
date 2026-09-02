@@ -1,0 +1,22 @@
+# vlagent (DaemonSet) собирает логи всех подов и шлёт в VictoriaLogs.
+# Генерируется Terraform'ом из values/vlc-values.yaml.tftpl через templatefile()
+# (monitoring.tf). Параметры приходят из local.*.
+nameOverride: ${vlc_name_override}
+
+remoteWrite:
+  - url: ${vls_server_url}
+
+collector:
+  # Лейблы пода попадают в kubernetes.pod_labels.* — по ним фильтруют алерты.
+  includePodLabels: true
+  # Не собираем логи самого коллектора (иначе будет шум).
+  # `HOSTNAME` — плейсхолдер самого vlagent, экранирован от Terraform-шаблона.
+  excludeFilter: "kubernetes.pod_name:=%%{HOSTNAME}"
+
+resources:
+  requests:
+    cpu: ${vlc_cpu_request}
+    memory: ${vlc_memory_request}
+  limits:
+    cpu: ${vlc_cpu_limit}
+    memory: ${vlc_memory_limit}
