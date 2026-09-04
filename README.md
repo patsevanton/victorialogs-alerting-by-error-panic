@@ -169,7 +169,17 @@ mux.HandleFunc("/fatal", func(w http.ResponseWriter, r *http.Request) {
 
 ### Nuxt: `apps/nuxt-app`
 
-Приложение Nitro/Nuxt логирует ошибки серверных хендлеров в `stdout`. Два эндпоинта:
+Приложение Nitro/Nuxt логирует ошибки серверных хендлеров в `stdout` и содержит эндпоинты под каждый класс ошибок:
+
+| Эндпоинт      | Что происходит в проде                          | Что ловится |
+| ------------- | ----------------------------------------------- | ----------- |
+| `/api/error`  | `createError` со `statusCode: 500`              | `NUXT_ERROR` |
+| `/api/throw`  | необработанное исключение (`throw new Error`)   | `NUXT_UNHANDLED` |
+| `/api/rejection` | необработанный promise rejection            | `NUXT_REJECTION` |
+| `/api/fatal`  | `console.error('NUXT_FATAL: ...')` + `process.exit(1)` | `NUXT_FATAL` |
+| `/api/error-502` | лог `NUXT_502: ...`, ответ 502 (процесс живёт) | `NUXT_502` |
+
+Здесь в лог пишутся явные маркеры `NUXT_ERROR`, `NUXT_UNHANDLED`, `NUXT_REJECTION`, `NUXT_FATAL` и `NUXT_502`, по которым строятся правила. В реальном приложении это будут штатные логи Nitro/Nitro-хендлеров — достаточно договориться о едином формате (`level`, `message`, `requestId`), а правила писать под него.
 
 ```ts
 // server/api/error.ts — 500 через createError
@@ -183,9 +193,27 @@ export default defineEventHandler(() => {
   console.error('NUXT_UNHANDLED: unhandled rejection on /api/throw')
   throw new Error('unhandled exception in /api/throw')
 })
-```
 
-Здесь в лог пишутся явные маркеры `NUXT_ERROR` и `NUXT_UNHANDLED`, по которым строятся правила. В реальном приложении это будут штатные логи Nitro/Nitro-хендлеров — достаточно договориться о едином формате (`level`, `message`, `requestId`), а правила писать под него.
+// server/api/rejection.ts — необработанный promise rejection
+export default defineEventHandler(() => {
+  console.error('NUXT_REJECTION: unhandled promise rejection on /api/rejection')
+  void Promise.reject(new Error('unhandled rejection in /api/rejection'))
+  return { status: 'triggered' }
+})
+
+// server/api/fatal.ts — фатальная ошибка, process.exit(1)
+export default defineEventHandler(() => {
+  console.error('NUXT_FATAL: unrecoverable configuration error on /api/fatal')
+  process.exit(1)
+})
+
+// server/api/error-502.ts — ошибка без краха, ответ 502
+export default defineEventHandler((event) => {
+  console.error('NUXT_502: upstream timeout on /api/error-502')
+  setResponseStatus(event, 502)
+  return { error: 'Bad Gateway' }
+})
+```
 
 Манифест: [`manifests/nuxt-app.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/nuxt-app.yaml).
 
@@ -260,6 +288,33 @@ data:
                 | filter unhandled:>0
             for: 1m
             # ...
+
+          - alert: NuxtUnhandledPromiseRejection
+            expr: |
+              kubernetes.pod_labels.app:=nuxt-app
+                | _msg:~"NUXT_REJECTION"
+                | stats count() as rejections
+                | filter rejections:>0
+            for: 1m
+            # ...
+
+          - alert: NuxtFatalLog
+            expr: |
+              kubernetes.pod_labels.app:=nuxt-app
+                | _msg:~"NUXT_FATAL"
+                | stats count() as fatals
+                | filter fatals:>0
+            for: 1m
+            # ...
+
+          - alert: NuxtBadGateway
+            expr: |
+              kubernetes.pod_labels.app:=nuxt-app
+                | _msg:~"NUXT_502"
+                | stats count() as badgateways
+                | filter badgateways:>0
+            for: 2m
+            # ...
 ```
 
 Разбор LogsQL-выражения:
@@ -273,13 +328,13 @@ data:
 
 `stats`-pipe обязателен: `vmalert` забирает из VictoriaLogs не сами строки, а результаты `/select/logsql/stats_query` (счётчики, гистограммы и т.д.) в формате Prometheus API — именно их он сравнивает с порогом.
 
-Почему для Nuxt два отдельных алерта (`NuxtServerError` и `NuxtUnhandledRejection`), а не один с регуляркой `NUXT_(ERROR|UNHANDLED)`:
+Почему для Nuxt отдельные алерты (`NuxtServerError`, `NuxtUnhandledRejection`, `NuxtUnhandledPromiseRejection`, `NuxtFatalLog`, `NuxtBadGateway`), а не один с общей регуляркой:
 
-- у них разные окна `for` — `2m` для server error и `1m` для unhandled rejection (необработанные исключения критичнее, порог должен срабатывать быстрее), а в одном алерте можно задать только одно окно;
-- разная реакция: server error и unhandled rejection обычно хотят разного приоритета/получателей, а разведение по двум алертам позволяет маркировать их разными `labels` и роутить отдельно;
-- проще диагностика: в алерте сразу виден класс сбоя (`NuxtServerError` vs `NuxtUnhandledRejection`), не разбирая текст сообщения.
+- у них разные окна `for` — `2m` для «мягких» событий (`NuxtServerError`, `NuxtBadGateway`) и `1m` для критичных (`NuxtUnhandledRejection`, `NuxtUnhandledPromiseRejection`, `NuxtFatalLog`), а в одном алерте можно задать только одно окно;
+- разная реакция: критические события и 500/502 обычно хотят разного приоритета/получателей, а разведение по отдельным алертам позволяет маркировать их разными `labels` и роутить отдельно;
+- проще диагностика: в алерте сразу виден класс сбоя (например `NuxtFatalLog` vs `NuxtBadGateway`), не разбирая текст сообщения.
 
-Объединять в один алерт имеет смысл только если оба события обрабатываются одинаково — тот же responder, тот же приоритет, то же окно `for`. Тогда можно заменить два правила одним с `_msg:~"NUXT_(ERROR|UNHANDLED)"`, но при этом теряется различие между классами в названии алерта и раздельное окно `for`.
+Объединять в один алерт имеет смысл только если события обрабатываются одинаково — тот же responder, тот же приоритет, то же окно `for`. Тогда можно заменить несколько правил одним с общей регуляркой, но при этом теряется различие между классами в названии алерта и раздельное окно `for`.
 
 ## Шаг 5. Встроенный vmalert из vmks
 
@@ -450,8 +505,11 @@ curl -s -o /dev/null http://localhost:8080/fatal   # log.Fatal -> pod падае
 kill %1
 
 kubectl -n apps port-forward svc/nuxt-app 3000:3000 &
-curl -s -o /dev/null http://localhost:3000/api/error   # 500
-curl -s -o /dev/null http://localhost:3000/api/throw   # необработанное исключение
+curl -s -o /dev/null http://localhost:3000/api/error      # 500
+curl -s -o /dev/null http://localhost:3000/api/throw      # необработанное исключение
+curl -s -o /dev/null http://localhost:3000/api/rejection  # необработанный promise rejection
+curl -s -o /dev/null http://localhost:3000/api/fatal      # process.exit -> pod падает
+curl -s -o /dev/null http://localhost:3000/api/error-502  # 502 без краха
 kill %1
 ```
 

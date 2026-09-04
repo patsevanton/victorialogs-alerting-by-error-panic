@@ -89,3 +89,47 @@ data:
               summary: "необработанное исключение в nuxt-app"
               description: |
                 Необработанных исключений в nuxt-app за 1m: {{ $value }}.
+
+          - alert: NuxtUnhandledPromiseRejection
+            expr: |
+              kubernetes.pod_labels.app:=nuxt-app
+                | _msg:~"NUXT_REJECTION"
+                | stats count() as rejections
+                | filter rejections:>0
+            for: 1m
+            labels:
+              severity: critical
+              app: nuxt-app
+            annotations:
+              summary: "необработанный promise rejection в nuxt-app"
+              description: |
+                Необработанных promise rejection в nuxt-app за 1m: {{ $value }}.
+
+          - alert: NuxtFatalLog
+            expr: |
+              kubernetes.pod_labels.app:=nuxt-app
+                | _msg:~"NUXT_FATAL"
+                | stats count() as fatals
+                | filter fatals:>0
+            for: 1m
+            labels:
+              severity: critical
+              app: nuxt-app
+            annotations:
+              summary: "fatal в nuxt-app"
+              description: |
+                Вызов process.exit в nuxt-app. Фаталов за 1m: {{ $value }}.
+
+          - alert: NuxtBadGateway
+            expr: |
+              kubernetes.pod_labels.app:=nuxt-app
+                | _msg:~"NUXT_502"
+                | stats count() as badgateways
+                | filter badgateways:>0
+            for: 2m
+            labels:
+              severity: warning
+              app: nuxt-app
+            annotations:
+              summary: "502 в nuxt-app"
+              description: "Ответов 502 в nuxt-app за 1m: {{ $value }}."
