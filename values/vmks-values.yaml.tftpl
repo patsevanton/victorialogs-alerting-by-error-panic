@@ -2,7 +2,7 @@
 # Генерируется Terraform'ом из values/vmks-values.yaml.tftpl через templatefile()
 # (monitoring.tf). Параметры приходят из local.* / var.*.
 #
-# Правила читаются из файла (ConfigMap `vmalert-rules`), datasource — VictoriaLogs.
+# Правила приходят из CRD `VMRule` (selectAllByDefault: true), datasource — VictoriaLogs.
 #
 # vmalert пишет состояние алертов (ALERTS, ALERTS_FOR_STATE) в VictoriaMetrics:
 # VictoriaLogs сам метрики не хранит, поэтому remoteWrite/remoteRead остаются
@@ -11,7 +11,7 @@
 
 grafana:
   # Отключаем управление алертами через Grafana UI (Grafana Alerting).
-  # Алерты управляются только файлом правил и vmalert.
+  # Алерты управляются только VMRule и vmalert.
   grafana.ini:
     alerting:
       enabled: false
@@ -77,20 +77,16 @@ vmsingle:
 vmcluster:
   enabled: false
 
-# vmalert исполняет правила из файла (ConfigMap vmalert-rules), datasource = VictoriaLogs.
+# vmalert исполняет правила из CRD VMRule (selectAllByDefault: true), datasource = VictoriaLogs.
 vmalert:
   enabled: true
   spec:
-    selectAllByDefault: false
+    selectAllByDefault: true
     evaluationInterval: 1m
     # datasource = VictoriaLogs (read endpoint). Запросы LogsQL уходят на :9428.
     datasource:
       url: "${vls_server_url}"
-    # Монтируем ConfigMap vmalert-rules в /etc/vm/configs/vmalert-rules.
-    configMaps:
-      - vmalert-rules
     extraArgs:
-      rule: "/etc/vm/configs/vmalert-rules/*.yaml"
       rule.defaultRuleType: "vlogs"
 
 alertmanager:
