@@ -70,19 +70,19 @@ locals {
 
 resource "local_file" "write_vmks_values" {
   content         = local.vmks_values
-  filename        = "${path.module}/vmks-values.yaml"
+  filename        = "${path.module}/values/vmks-values.yaml"
   file_permission = "0644"
 }
 
 resource "local_file" "write_vls_values" {
   content         = local.vls_values
-  filename        = "${path.module}/vls-values.yaml"
+  filename        = "${path.module}/values/vls-values.yaml"
   file_permission = "0644"
 }
 
 resource "local_file" "write_vlc_values" {
   content         = local.vlc_values
-  filename        = "${path.module}/vlc-values.yaml"
+  filename        = "${path.module}/values/vlc-values.yaml"
   file_permission = "0644"
 }
 

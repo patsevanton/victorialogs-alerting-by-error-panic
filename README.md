@@ -45,7 +45,7 @@ flowchart LR
 
 Ключевые файлы: [`k8s.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/k8s.tf), [`net.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/net.tf), [`ip-dns.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/ip-dns.tf), [`versions.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/versions.tf).
 
-Все values (`vmks`, `vls`, `vlc`) генерируются Terraform'ом из шаблонов `values/*.yaml.tftpl` через `templatefile` (`monitoring.tf`) в файлы `vmks-values.yaml`, `vls-values.yaml`, `vlc-values.yaml` (в git они не попадают — `.gitignore`). Параметры пробрасываются через `local.*` / `var.*`, FQDN Grafana/Alertmanager формируются из публичного IP Traefik (`terraform output ingress_public_ip`).
+Все values (`vmks`, `vls`, `vlc`) генерируются Terraform'ом из шаблонов `values/*.yaml.tftpl` через `templatefile` (`monitoring.tf`) в файлы `values/vmks-values.yaml`, `values/vls-values.yaml`, `values/vlc-values.yaml` — рядом с шаблонами (в git они не попадают — `.gitignore`). Параметры пробрасываются через `local.*` / `var.*`, FQDN Grafana/Alertmanager формируются из публичного IP Traefik (`terraform output ingress_public_ip`).
 
 ### Версии компонентов
 
@@ -59,7 +59,7 @@ flowchart LR
 
 ## Шаг 1. VictoriaLogs
 
-Ставим single-node VictoriaLogs отдельным чартом в namespace `vmks` (там же будет весь стек). Values генерируются Terraform'ом из [`values/vls-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vls-values.yaml.tftpl) в файл `vls-values.yaml`:
+Ставим single-node VictoriaLogs отдельным чартом в namespace `vmks` (там же будет весь стек). Values генерируются Terraform'ом из [`values/vls-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vls-values.yaml.tftpl) в файл `values/vls-values.yaml`:
 
 ```bash
 helm repo add vm https://victoriametrics.github.io/helm-charts/
@@ -68,11 +68,11 @@ helm repo update
 helm upgrade --install vls vm/victoria-logs-single \
   --namespace vmks --create-namespace \
   --version 0.13.9 \
-  --values vls-values.yaml
+  --values values/vls-values.yaml
 ```
 
 ```yaml
-# values/vls-values.yaml.tftpl (рендерится в vls-values.yaml)
+# values/vls-values.yaml.tftpl (рендерится в values/vls-values.yaml)
 nameOverride: ${vls_name_override}
 
 server:
@@ -94,17 +94,17 @@ server:
 
 ## Шаг 2. vlagent
 
-Собираем логи всех подов через DaemonSet `vlagent`. Values генерируются Terraform'ом из [`values/vlc-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vlc-values.yaml.tftpl) в файл `vlc-values.yaml`:
+Собираем логи всех подов через DaemonSet `vlagent`. Values генерируются Terraform'ом из [`values/vlc-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vlc-values.yaml.tftpl) в файл `values/vlc-values.yaml`:
 
 ```bash
 helm upgrade --install vlc vm/victoria-logs-collector \
   --namespace vmks \
   --version 0.3.7 \
-  --values vlc-values.yaml
+  --values values/vlc-values.yaml
 ```
 
 ```yaml
-# values/vlc-values.yaml.tftpl (рендерится в vlc-values.yaml)
+# values/vlc-values.yaml.tftpl (рендерится в values/vlc-values.yaml)
 nameOverride: ${vlc_name_override}
 
 remoteWrite:
@@ -352,7 +352,7 @@ kubectl apply -f manifests/vmalert-rules.yaml
 helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-metrics-k8s-stack \
   --namespace vmks --create-namespace \
   --version 0.91.2 \
-  --wait --values vmks-values.yaml
+  --wait --values values/vmks-values.yaml
 ```
 
 Ключевые части [`values/vmks-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vmks-values.yaml.tftpl):

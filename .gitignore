@@ -44,9 +44,9 @@ terraform.rc
 # planout
 
 # Значения генерируются из values/*.tftpl через Terraform (monitoring.tf)
-vmks-values.yaml
-vls-values.yaml
-vlc-values.yaml
+values/vmks-values.yaml
+values/vls-values.yaml
+values/vlc-values.yaml
 
 # Сгенерированный манифест секрета Telegram (содержит токен)
 telegram-bot-token-secret.yaml
