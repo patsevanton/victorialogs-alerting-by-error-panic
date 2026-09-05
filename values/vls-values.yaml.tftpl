@@ -16,3 +16,8 @@ server:
     limits:
       cpu: "${vls_cpu_limit}"
       memory: ${vls_memory_limit}
+  # VictoriaLogs отдаёт собственные метрики на /metrics. Их скрейпит vmagent из
+  # victoria-metrics-k8s-stack (ставится первым) через этот VMServiceScrape и пишет
+  # в vmsingle. Поэтому vmks должен быть уже поднят до установки VictoriaLogs.
+  vmServiceScrape:
+    enabled: true

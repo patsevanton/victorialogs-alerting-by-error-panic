@@ -11,6 +11,8 @@ locals {
   alertmanager_fqdn = "alertmanager.${local.ingress_public_ip}.sslip.io"
 
   # ----- VictoriaLogs single-node (victoria-logs-single) -----
+  # vmks ставится первым: vmServiceScrape (см. vls-values.yaml.tftpl) уводит
+  # собственные метрики VictoriaLogs в vmagent/vmsingle из victoria-metrics-k8s-stack.
   vls_retention      = "14d"
   vls_storage_class  = "yc-network-ssd"
   vls_pv_size        = "20Gi"
