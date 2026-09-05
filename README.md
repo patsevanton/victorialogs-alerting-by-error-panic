@@ -13,7 +13,7 @@
 - **vmalert** исполняет правила, написанные на **LogsQL** (а не PromQL), и смотрит на VictoriaLogs как на datasource;
 - правила живут **в CRD `VMRule`**, а не в Grafana UI: единственный source of truth — манифест `vmalert-rules`;
 - **Alertmanager шлёт алерты напрямую в Telegram** через нативный `telegram_configs`, без промежуточного bridge;
-- управление алертами через Grafana UI (`unified_alerting`) **отключено**;
+- управление алертами через Grafana UI (`unified_alerting`) **отключено**. далее будет написано почему;
 - **порядок установки: сначала vmks, потом VictoriaLogs** — для VictoriaLogs нужно указывать, куда отправлять собственные метрики, а они скрейпятся `vmagent`'ом из vmks.
 
 ```mermaid
@@ -41,19 +41,6 @@ flowchart LR
 4. `vmalert` раз в `1m` исполняет LogsQL-запросы из `VMRule` против VictoriaLogs (`/select/logsql/stats_query`).
 5. Сработавшее правило уходит в Alertmanager.
 6. Alertmanager через `telegram_configs` отправляет сообщение напрямую в Telegram-бота.
-
-Важные нюансы:
-
-- **Порядок установки: vmks первый.** Для VictoriaLogs нужно указывать, куда отправлять собственные метрики — они скрейпятся `vmagent`'ом из vmks через `vmServiceScrape` и пишутся в `vmsingle`. Поэтому сначала ставим vmks, и только затем VictoriaLogs, который при установке уже найдёт работающий `vmagent`.
-- **VictoriaLogs не хранит метрики**, поэтому `vmalert` обязан куда-то писать состояние алертов (`ALERTS`, `ALERTS_FOR_STATE`) и восстанавливать его при рестарте. Для этого в том же vmks поднят `vmsingle` (single-node VictoriaMetrics), куда `vmalert` пишет через `remoteWrite`/`remoteRead`.
-
-## Стенд: Yandex Managed K8s
-
-Инфраструктура разворачивается Terraform в Yandex Cloud (по аналогии с соседними проектами). Кластер Managed Kubernetes (`k8s.tf`, версия 1.33) состоит из master (управляемый, вне кластера) и группы из 3 узлов `standard-v3`, 4 vCPU / 8 ГБ, preemptible, по одной ноде в зонах `ru-central1-b/-d/-e`. Ноды без публичных IP: `network_interface.nat = false`, исходящий трафик идёт через NAT-шлюз и Route Table (`net.tf`). Публичный адрес есть только у балансировщика Traefik, из которого через `sslip.io` формируются FQDN Grafana и Alertmanager.
-
-Ключевые файлы: [`k8s.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/k8s.tf), [`net.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/net.tf), [`ip-dns.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/ip-dns.tf), [`versions.tf`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/versions.tf).
-
-Все values (`vmks`, `vls`, `vlc`) генерируются Terraform'ом из шаблонов `values/*.yaml.tftpl` через `templatefile` (`monitoring.tf`) в файлы `values/vmks-values.yaml`, `values/vls-values.yaml`, `values/vlc-values.yaml` — рядом с шаблонами (в git они не попадают — `.gitignore`). Параметры пробрасываются через `local.*` / `var.*`, FQDN Grafana/Alertmanager формируются из публичного IP Traefik (`terraform output ingress_public_ip`).
 
 ### Версии компонентов
 
