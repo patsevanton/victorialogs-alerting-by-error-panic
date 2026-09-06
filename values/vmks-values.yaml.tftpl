@@ -77,17 +77,19 @@ vmsingle:
 vmcluster:
   enabled: false
 
-# vmalert исполняет правила из CRD VMRule (selectAllByDefault: true), datasource = VictoriaLogs.
+# vmalert (встроенный) исполняет только дефолтные PromQL-правила vmks против
+# vmsingle (datasource чарт подставляет сам из vmsingle). Дефолтные правила
+# создаёт sync-job и помечает лейблом app.kubernetes.io/managed-by: sync-job —
+# по нему встроенный vmalert их и выбирает. Наши LogsQL-правила исполняет
+# отдельный VMAlert (manifests/vmalert-logs.yaml).
 vmalert:
   enabled: true
   spec:
-    selectAllByDefault: true
+    selectAllByDefault: false
+    ruleSelector:
+      matchLabels:
+        app.kubernetes.io/managed-by: sync-job
     evaluationInterval: 1m
-    # datasource = VictoriaLogs (read endpoint). Запросы LogsQL уходят на :9428.
-    datasource:
-      url: "${vls_server_url}"
-    extraArgs:
-      rule.defaultRuleType: "vlogs"
 
 alertmanager:
   enabled: true

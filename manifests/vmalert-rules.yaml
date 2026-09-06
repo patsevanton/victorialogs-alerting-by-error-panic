@@ -3,6 +3,8 @@ kind: VMRule
 metadata:
   name: vmalert-rules
   namespace: vmks
+  labels:
+    type: logs-to-metrics
 spec:
   groups:
     - name: golang-app
