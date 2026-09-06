@@ -125,7 +125,17 @@ alertmanager:
       group_wait: 30s
       group_interval: 5m
       repeat_interval: 4h
+      # Watchdog и InfoInhibitor — служебные алерты vmks: выполняют свою работу
+      # (проверка пайплайна и ингибирование info-алертов), но в Telegram не шлются.
+      routes:
+        - matchers:
+            - alertname="Watchdog"
+          receiver: "null"
+        - matchers:
+            - alertname="InfoInhibitor"
+          receiver: "null"
     receivers:
+      - name: "null"
       - name: telegram
         telegram_configs:
           - bot_token_file: /etc/vm/secrets/telegram-bot-token/bot-token
