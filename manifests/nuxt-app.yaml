@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: nuxt-app
-          image: ghcr.io/patsevanton/victorialogs-alerting-by-error-panic/nuxt-app:1.0.0
+          image: ghcr.io/patsevanton/victorialogs-alerting-by-error-panic/nuxt-app:1.0.1
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000

@@ -460,18 +460,18 @@ alertmanager:
 kubectl get pods -n vmks | grep -E "vls|vlc|vmalert|alertmanager|vmsingle"
 ```
 
-Образы приложений собираются из `apps/` и пушатся в GHCR workflow'ом [`.github/workflows/docker.yml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/.github/workflows/docker.yml) (semver-release + `docker/build-push-action`). В манифестах закреплена версия `1.0.0`:
+Образы приложений собираются из `apps/` и пушатся в GHCR workflow'ом [`.github/workflows/docker.yml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/.github/workflows/docker.yml) (semver-release + `docker/build-push-action`). В манифестах закреплена версия `1.0.1`:
 
 ```
-ghcr.io/patsevanton/victorialogs-alerting-by-error-panic/golang-app:1.0.0
-ghcr.io/patsevanton/victorialogs-alerting-by-error-panic/nuxt-app:1.0.0
+ghcr.io/patsevanton/victorialogs-alerting-by-error-panic/golang-app:1.0.1
+ghcr.io/patsevanton/victorialogs-alerting-by-error-panic/nuxt-app:1.0.1
 ```
 
 Для локальной сборки вручную:
 
 ```bash
-docker build -t ghcr.io/<you>/victorialogs-alerting-by-error-panic/golang-app:1.0.0 apps/golang-app
-docker build -t ghcr.io/<you>/victorialogs-alerting-by-error-panic/nuxt-app:1.0.0 apps/nuxt-app
+docker build -t ghcr.io/<you>/victorialogs-alerting-by-error-panic/golang-app:1.0.1 apps/golang-app
+docker build -t ghcr.io/<you>/victorialogs-alerting-by-error-panic/nuxt-app:1.0.1 apps/nuxt-app
 ```
 
 Провоцируем падения (Go-образ — distroless, без шелла, поэтому идём через port-forward):
