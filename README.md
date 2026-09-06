@@ -18,7 +18,7 @@
 - **порядок установки: сначала vmks, потом VictoriaLogs**.
 
 ```mermaid
-flowchart LR
+flowchart TD
     Go["golang-app<br/>(panic, fatal, error)"] -->|stdout| Vlagent["vlagent (DaemonSet)"]
     Nuxt["nuxt-app<br/>(500, unhandled)"] -->|stdout| Vlagent
     Vlagent -->|insert/native| VL[("VictoriaLogs<br/>vls-server:9428")]
@@ -42,16 +42,6 @@ flowchart LR
 4. `vmalert` раз в `1m` исполняет LogsQL-запросы из `VMRule` против VictoriaLogs (`/select/logsql/stats_query`).
 5. Сработавшее правило уходит в Alertmanager.
 6. Alertmanager через `telegram_configs` отправляет сообщение напрямую в Telegram-бота.
-
-### Версии компонентов
-
-| Компонент            | Чарт / образ                     | Версия |
-| -------------------- | -------------------------------- | ------ |
-| Kubernetes           | Yandex Managed K8s               | 1.33   |
-| ingress-контроллер   | traefik                          | 41.3.0 |
-| vmks                  | victoria-metrics-k8s-stack       | 0.91.2 |
-| VictoriaLogs         | victoria-logs-single             | 0.13.9 |
-| vlagent              | victoria-logs-collector          | 0.3.7  |
 
 ## Шаг 1. victoria-metrics-k8s-stack (vmks)
 
