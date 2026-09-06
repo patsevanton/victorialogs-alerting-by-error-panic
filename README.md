@@ -15,7 +15,7 @@
 - **vmalert** исполняет правила, написанные на **LogsQL** (а не PromQL), и смотрит на VictoriaLogs как на datasource;
 - правила живут **в CRD `VMRule`**, а не в Grafana UI: единственный source of truth — манифест `vmalert-rules`; управление алертами через Grafana UI (`unified_alerting`) **отключено** — далее будет написано почему;
 - **Alertmanager шлёт алерты напрямую в Telegram** через нативный `telegram_configs`, без промежуточного bridge;
-- **порядок установки: сначала vmks, потом VictoriaLogs** — для VictoriaLogs нужно указывать, куда отправлять собственные метрики, а они скрейпятся `vmagent`'ом из vmks.
+- **порядок установки: сначала vmks, потом VictoriaLogs**.
 
 ```mermaid
 flowchart LR
