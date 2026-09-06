@@ -35,7 +35,7 @@ flowchart TD
 
 Поток данных:
 
-1. Первым ставится `victoria-metrics-k8s-stack` (vmks): вместе с ним поднимаются `vmagent`, `vmsingle`, встроенный `vmalert`, `Alertmanager` и `Grafana`. Отдельным манифестом поднимается второй `VMAlert` (`vmalert-logs`) под LogsQL-правила.
+1. Устанавливаем `victoria-metrics-k8s-stack` (vmks): вместе с ним поднимаются `vmagent`, `vmsingle`, встроенный `vmalert`, `Alertmanager` и `Grafana`. Отдельным манифестом поднимается второй `VMAlert` (`vmalert-logs`) под LogsQL-правила.
 2. Приложения пишут логи в `stdout`/`stderr` (12-factor).
 3. `vlagent` с каждой ноды собирает логи контейнеров и реплицирует их в VictoriaLogs (`/insert/native`).
 4. `vmalert-logs` раз в `1m` исполняет LogsQL-запросы из `VMRule` против VictoriaLogs (`/select/logsql/stats_query`).
@@ -44,7 +44,7 @@ flowchart TD
 
 ## Шаг 1. victoria-metrics-k8s-stack (vmks)
 
-Первым ставим `victoria-metrics-k8s-stack`: он даёт `vmagent`, `vmsingle`, встроенный `vmalert`, `Alertmanager` и `Grafana` — весь метрико-алертинговый фундамент. Для VictoriaLogs нужно указывать, куда отправлять собственные метрики, поэтому именно vmks (точнее, его `vmagent` и `vmsingle`) должен быть уже поднят к моменту установки VictoriaLogs. Values генерируются Terraform'ом из [`values/vmks-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vmks-values.yaml.tftpl) в файл `values/vmks-values.yaml`:
+Устанавливаем `victoria-metrics-k8s-stack`: он даёт `vmagent`, `vmsingle`, встроенный `vmalert`, `Alertmanager` и `Grafana` — весь метрико-алертинговый фундамент. Для VictoriaLogs нужно указывать, куда отправлять собственные метрики, поэтому именно vmks (точнее, его `vmagent` и `vmsingle`) должен быть уже поднят к моменту установки VictoriaLogs. Values генерируются Terraform'ом из [`values/vmks-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vmks-values.yaml.tftpl) в файл `values/vmks-values.yaml`:
 
 ```bash
 helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-metrics-k8s-stack \
@@ -567,11 +567,12 @@ curl -s 'http://localhost:9428/select/logsql/stats_query' \
 Проверка состояния алертов в `vmalert-logs`:
 
 ```bash
-kubectl -n vmks port-forward svc/vmalert-logs-vmalert 8080:8080
-# открыть http://localhost:8080/alerts — увидим GolangPanicDetected в состоянии FIRING
+kubectl -n vmks port-forward svc/vmalert-vmalert-logs 8080:8080
+# UI:  http://localhost:8080/vmalert — увидим GolangPanicDetected в состоянии FIRING
+# API: http://localhost:8080/api/v1/alerts
 ```
 
-> Имя сервиса отдельного `vmalert-logs` чарт оператора строит как `vmalert-logs-vmalert` (уточните через `kubectl get svc -n vmks`).
+> Имя сервиса отдельного `vmalert-logs` чарт оператора строит как `vmalert-vmalert-logs` (уточните через `kubectl get svc -n vmks`).
 
 Через `1m` + `for: 1m` в Telegram приходит сообщение вида:
 

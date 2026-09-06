@@ -125,14 +125,19 @@ alertmanager:
       group_wait: 30s
       group_interval: 5m
       repeat_interval: 4h
-      # Watchdog и InfoInhibitor — служебные алерты vmks: выполняют свою работу
-      # (проверка пайплайна и ингибирование info-алертов), но в Telegram не шлются.
+      # Watchdog, InfoInhibitor и RecordingRulesNoData — служебные алерты vmks:
+      # выполняют свою работу, но в Telegram не шлются. RecordingRulesNoData
+      # шумит, когда recording-правило count:up0 отдаёт 0 семплов — это здоровое
+      # состояние (нет упавших таргетов), а не проблема.
       routes:
         - matchers:
             - alertname="Watchdog"
           receiver: "null"
         - matchers:
             - alertname="InfoInhibitor"
+          receiver: "null"
+        - matchers:
+            - alertname="RecordingRulesNoData"
           receiver: "null"
     receivers:
       - name: "null"
