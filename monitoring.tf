@@ -68,6 +68,13 @@ locals {
   telegram_secret = templatefile("${path.module}/manifests/telegram-bot-token-secret.yaml.tftpl", {
     bot_token_b64 = base64encode(var.telegram_bot_token)
   })
+
+  # Манифест mihomo-прокси (обход блокировки api.telegram.org). URL VLESS-подписки
+  # приходит из переменной vless_subscription_url (sensitive, в git не попадает)
+  # и подставляется в Secret mihomo-config. Рендерится в manifests/mihomo-proxy.yaml.
+  mihomo_manifest = templatefile("${path.module}/manifests/mihomo-proxy.yaml.tftpl", {
+    vless_subscription_url = var.vless_subscription_url
+  })
 }
 
 resource "local_file" "write_vmks_values" {
@@ -91,5 +98,11 @@ resource "local_file" "write_vlc_values" {
 resource "local_file" "write_telegram_secret" {
   content         = local.telegram_secret
   filename        = "${path.module}/telegram-bot-token-secret.yaml"
+  file_permission = "0600"
+}
+
+resource "local_file" "write_mihomo_manifest" {
+  content         = local.mihomo_manifest
+  filename        = "${path.module}/manifests/mihomo-proxy.yaml"
   file_permission = "0600"
 }

@@ -1,3 +1,4 @@
-folder_id          = "b1gxxxxxxxxxxxxxxxx"
-telegram_bot_token = "123456789:ABCdefGhI-jklMnoPQRstuVwxYZ"
-telegram_chat_id   = -1001234567890
+folder_id              = "b1gxxxxxxxxxxxxxxxx"
+telegram_bot_token     = "123456789:ABCdefGhI-jklMnoPQRstuVwxYZ"
+telegram_chat_id       = -1001234567890
+vless_subscription_url = "https://sub.example.com/ВАША_VLESS_ПОДПИСКА"

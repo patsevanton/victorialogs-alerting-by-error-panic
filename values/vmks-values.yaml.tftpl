@@ -98,6 +98,17 @@ alertmanager:
     # /etc/vm/secrets/telegram-bot-token/bot-token.
     secrets:
       - telegram-bot-token
+    # Proxy-переменные для пода: api.telegram.org идёт через mihomo-proxy
+    # (обход блокировки), всё внутрикластерное — напрямую.
+    extraEnvs:
+      - name: HTTPS_PROXY
+        value: http://mihomo-proxy.mihomo.svc.cluster.local:1080
+      - name: https_proxy
+        value: http://mihomo-proxy.mihomo.svc.cluster.local:1080
+      - name: NO_PROXY
+        value: "127.0.0.1,localhost,.svc,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+      - name: no_proxy
+        value: "127.0.0.1,localhost,.svc,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
   ingress:
     enabled: true
     ingressClassName: traefik
@@ -106,6 +117,8 @@ alertmanager:
   config:
     global:
       resolve_timeout: 5m
+      http_config:
+        proxy_from_environment: true
     route:
       receiver: telegram
       group_by: ["alertname", "app"]

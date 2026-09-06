@@ -56,3 +56,4 @@ apps/golang-app/crash-app
 apps/nuxt-app/node_modules/
 apps/nuxt-app/.output/
 apps/nuxt-app/.nuxt/
+manifests/mihomo-proxy.yaml

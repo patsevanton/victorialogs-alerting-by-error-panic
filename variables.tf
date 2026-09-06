@@ -13,3 +13,9 @@ variable "telegram_chat_id" {
   type        = number
   description = "ID чата/группы Telegram, куда отправляются алерты (отрицательное число для групп). Alertmanager ожидает int"
 }
+
+variable "vless_subscription_url" {
+  type        = string
+  description = "URL VLESS-подписки для mihomo (обход блокировки api.telegram.org из Yandex Cloud)"
+  sensitive   = true
+}

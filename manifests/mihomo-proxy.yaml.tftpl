@@ -1,0 +1,142 @@
+# mihomo (ядро Clash.Meta) как отдельный Deployment + Service в namespace mihomo.
+# Alertmanager ходит наружу через него только для api.telegram.org —
+# всё остальное идёт напрямую (DIRECT), экономя VLESS-трафик.
+#
+#   Alertmanager pod ──HTTPS_PROXY──► mihomo-proxy:1080 ──VLESS──► api.telegram.org
+#
+# URL подписки приходит из Secret (строка подставляется Terraform'ом из
+# terraform.tfvars через переменную vless_subscription_url; в git не попадает).
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mihomo
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mihomo-config
+  namespace: mihomo
+stringData:
+  config.yaml: |
+    mixed-port: 1080              # HTTP + SOCKS5 на одном порту
+    bind-address: "*"             # слушаем не только localhost
+    allow-lan: true
+    log-level: warning
+    ipv6: false
+    external-controller: 0.0.0.0:9090
+
+    proxy-providers:
+      sub:
+        type: http
+        url: "${vless_subscription_url}"
+        interval: 3600
+        path: ./providers/sub.yaml
+        health-check:
+          enable: true
+          url: https://www.gstatic.com/generate_204
+          interval: 300
+
+    proxies: []                   # всё приходит из провайдера подписки
+
+    proxy-groups:
+      - name: auto
+        type: url-test            # авто-выбор живого/быстрого сервера
+        use: [sub]
+        # Telegram блокируется в РФ — оставляем только зарубежные серверы.
+        filter: "(?i)(Нидерланды|Германия|Франция|Великобритания|Финляндия|Швеция|Польша|Литва|Румыния|Австрия|Швейцария|Норвегия|США|USA|Англия|Европа|EU)"
+        exclude-filter: "(?i)Россия|Russia|Москва|СПб|Москва"
+        tolerance: 50
+        url: https://www.gstatic.com/generate_204
+
+    rules:
+      # внутрикластерное — мимо прокси
+      - DOMAIN-SUFFIX,cluster.local,DIRECT
+      - DOMAIN-SUFFIX,svc,DIRECT
+      - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+      - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+      - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+      # Telegram пускаем через VLESS-прокси
+      - DOMAIN-SUFFIX,telegram.org,auto
+      - DOMAIN-SUFFIX,t.me,auto
+      # всё остальное — напрямую
+      - MATCH,DIRECT
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mihomo-proxy
+  namespace: mihomo
+  labels:
+    app: mihomo-proxy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mihomo-proxy
+  template:
+    metadata:
+      labels:
+        app: mihomo-proxy
+    spec:
+      containers:
+        - name: mihomo
+          image: metacubex/mihomo:v1.19.29
+          args: ["-d", "/etc/mihomo"]
+          ports:
+            - name: proxy
+              containerPort: 1080
+            - name: ctl
+              containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mihomo/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: providers
+              mountPath: /etc/mihomo/providers
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9090
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 1080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 20m
+              memory: 48Mi
+            limits:
+              memory: 192Mi
+      volumes:
+        - name: config
+          secret:
+            secretName: mihomo-config
+        - name: providers
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mihomo-proxy
+  namespace: mihomo
+  labels:
+    app: mihomo-proxy
+spec:
+  type: ClusterIP
+  selector:
+    app: mihomo-proxy
+  ports:
+    - name: proxy
+      port: 1080
+      targetPort: 1080
