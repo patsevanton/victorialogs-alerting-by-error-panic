@@ -2,9 +2,9 @@
 
 ## Введение
 
-Классическая ситуация: Go-сервис падает с `panic: runtime error: invalid memory address or nil pointer dereference`, Nuxt-фронтенд отвечает 500-й. Сама ошибка при этом больше нигде не живёт — ни в интерфейсе, ни в базе. Клиент видит лишь общее «что-то сломалось», а точный текст ошибки остаётся только в логах. Значит, и узнать о проблеме вовремя можно только из логов.
+Классическая ситуация: Go-сервис падает с `panic: runtime error: invalid memory address or nil pointer dereference`, Nuxt-фронтенд логирует `NUXT_UNHANDLED: unhandled rejection`. Сама ошибка при этом больше нигде не живёт — ни в интерфейсе, ни в базе. Клиент видит лишь общее «что-то сломалось», а точный текст ошибки остаётся только в логах. Значит, и узнать о проблеме вовремя можно только из логов.
 
-Решение — алертинг по логам. Связка **VictoriaLogs + vlagent + vmalert + Alertmanager** следит за потоком логов, и как только приложение роняет `panic` или `log.Fatal`, а фронтенд отвечает 500-й, — в Telegram уходит алерт. Эта статья — пошаговый разбор того, как поднять такую связку в Kubernetes и не заплатить за это чрезмерной ценой.
+Решение — алертинг по логам. Связка **VictoriaLogs + vlagent + vmalert + Alertmanager** следит за потоком логов, и как только приложение роняет `panic`, `log.Fatal` или `NUXT_UNHANDLED`, — в Telegram уходит алерт. Эта статья — пошаговый разбор того, как поднять такую связку в Kubernetes и не заплатить за это чрезмерной ценой.
 
 ## Архитектура
 
@@ -15,12 +15,11 @@
 - **vmalert** исполняет правила, написанные на **LogsQL** (а не PromQL), и смотрит на VictoriaLogs как на datasource;
 - правила живут **в CRD `VMRule`**, а не в Grafana UI: единственный source of truth — манифест `vmalert-rules`; управление алертами через Grafana UI (`unified_alerting`) **отключено** — далее будет написано почему;
 - **Alertmanager шлёт алерты напрямую в Telegram** через нативный `telegram_configs`, без промежуточного bridge;
-- **порядок установки: сначала vmks, потом VictoriaLogs**.
 
 ```mermaid
 flowchart TD
-    Go["golang-app<br/>(panic, fatal, error)"] -->|stdout| Vlagent["vlagent (DaemonSet)"]
-    Nuxt["nuxt-app<br/>(500, unhandled)"] -->|stdout| Vlagent
+    Go["golang-app<br/>(panic, fatal, error)"] -->|stderr| Vlagent["vlagent (DaemonSet)"]
+    Nuxt["nuxt-app<br/>(500, unhandled)"] -->|stderr| Vlagent
     Vlagent -->|insert/native| VL[("VictoriaLogs<br/>vls-server:9428")]
 
     VL -->|LogsQL| VMA["vmalert<br/>rules: VMRule vmalert-rules"]
