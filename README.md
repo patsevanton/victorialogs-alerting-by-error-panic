@@ -35,7 +35,7 @@ flowchart TD
 
 Поток данных:
 
-1. Устанавливаем `victoria-metrics-k8s-stack` (vmks): вместе с ним поднимаются `vmagent`, `vmsingle`, встроенный `vmalert`, `Alertmanager` и `Grafana`. Отдельным манифестом поднимается второй `VMAlert` (`vmalert-logs`) под LogsQL-правила.
+1. Используем `victoria-metrics-k8s-stack` (vmks): внутри которого `vmagent`, `vmsingle`, встроенный `vmalert`, `Alertmanager` и `Grafana`. Отдельным манифестом поднимается второй `VMAlert` (`vmalert-logs`) под LogsQL-правила.
 2. Приложения пишут логи в `stdout`/`stderr` (12-factor).
 3. `vlagent` с каждой ноды собирает логи контейнеров и реплицирует их в VictoriaLogs (`/insert/native`).
 4. `vmalert-logs` раз в `1m` исполняет LogsQL-запросы из `VMRule` против VictoriaLogs (`/select/logsql/stats_query`).
