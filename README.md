@@ -44,7 +44,7 @@ flowchart TD
 
 ## Шаг 1. victoria-metrics-k8s-stack (vmks)
 
-Устанавливаем `victoria-metrics-k8s-stack`: он даёт `vmagent`, `vmsingle`, встроенный `vmalert`, `Alertmanager` и `Grafana` — весь метрико-алертинговый фундамент. Для VictoriaLogs нужно указывать, куда отправлять собственные метрики, поэтому именно vmks (точнее, его `vmagent` и `vmsingle`) должен быть уже поднят к моменту установки VictoriaLogs. Values генерируются Terraform'ом из [`values/vmks-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vmks-values.yaml.tftpl) в файл `values/vmks-values.yaml`:
+Предварительно устанавливаем `victoria-metrics-k8s-stack` чтобы при запуске VictoriaLogs уже мог отправлять метрики и алерты.
 
 ```bash
 helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-metrics-k8s-stack \
@@ -56,8 +56,7 @@ helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-m
 Ключевые части `values/vmks-values.yaml.tftpl`:
 
 ```yaml
-# Встроенный vmalert исполняет только штатные PromQL-правила vmks
-# (создаёт sync-job, помечает лейблом app.kubernetes.io/managed-by: sync-job).
+# Встроенный vmalert исполняет только штатные PromQL-правила vmks.
 # LogsQL-правила исполняет отдельный VMAlert (manifests/vmalert-logs.yaml).
 vmalert:
   enabled: true
@@ -68,7 +67,7 @@ vmalert:
         app.kubernetes.io/managed-by: sync-job
     evaluationInterval: 1m
 
-# vmalert-logs пишет состояние алертов сюда (VictoriaLogs метрики не хранит)
+# vmalert-logs пишет состояние алертов сюда
 vmsingle:
   enabled: true
   spec:
