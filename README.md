@@ -67,22 +67,18 @@ vmalert:
         app.kubernetes.io/managed-by: sync-job
     evaluationInterval: 1m
 
-# vmalert-logs пишет состояние алертов сюда
+# vmalert-logs пишет состояние алертов сюда (enabled и storage 20Gi — дефолты чарта)
 vmsingle:
   enabled: true
   spec:
     retentionPeriod: "${vmks_retention}"
-    storage:
-      resources:
-        requests:
-          storage: ${vmks_pv_size}
 ```
 
 Здесь важно:
 
 - Встроенный `vmalert` намеренно ограничен `ruleSelector` по лейблу `app.kubernetes.io/managed-by: sync-job` — он исполняет только дефолтные PromQL-правила стека против `vmsingle`. LogsQL-правила из `VMRule` он не трогает.
-- `vmsingle` включён — сюда `vmalert-logs` пишет `ALERTS`/`ALERTS_FOR_STATE` через `remoteWrite`/`remoteRead`. В него же `vmagent` пишет скрейпнутые метрики, в том числе метрики VictoriaLogs.
-- `alertmanager` тоже включён тем же чартом и настраивается в отдельном блоке `alertmanager.*` с нативным `telegram_configs` — подробнее в Шаге 6.
+- `vmsingle` включён (дефолт чарта) — сюда `vmalert-logs` пишет `ALERTS`/`ALERTS_FOR_STATE` через `remoteWrite`/`remoteRead`. В него же `vmagent` пишет скрейпнутые метрики, в том числе метрики VictoriaLogs.
+- `alertmanager` включён (дефолт чарта) и настраивается в отдельном блоке `alertmanager.*` с нативным `telegram_configs` — подробнее в Шаге 6.
 
 Отдельный `VMAlert` `vmalert-logs` объявлен манифестом [`manifests/vmalert-logs.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-logs.yaml):
 
@@ -196,8 +192,6 @@ remoteWrite:
   - url: ${vls_server_url}
 
 collector:
-  # Лейблы пода попадают в kubernetes.pod_labels.* — по ним фильтруют алерты.
-  includePodLabels: true
   # Не собираем логи самого коллектора (иначе будет шум).
   excludeFilter: "kubernetes.pod_name:=%{HOSTNAME}"
 
@@ -210,7 +204,7 @@ resources:
     memory: ${vlc_memory_limit}
 ```
 
-`includePodLabels: true` — критично для алертов: каждый лог получает поля `kubernetes.pod_labels.app`, по которым правила отличают `golang-app` от `nuxt-app`. `_stream`-полями по умолчанию становятся `kubernetes.container_name`, `kubernetes.pod_name`, `kubernetes.pod_namespace` — это даёт быструю фильтрацию и группировку в LogsQL.
+`includePodLabels` (по умолчанию `true`) — критично для алертов: каждый лог получает поля `kubernetes.pod_labels.app`, по которым правила отличают `golang-app` от `nuxt-app`. `_stream`-полями по умолчанию становятся `kubernetes.container_name`, `kubernetes.pod_name`, `kubernetes.pod_namespace` — это даёт быструю фильтрацию и группировку в LogsQL.
 
 ## Шаг 4. Приложения, которые падают
 
@@ -588,7 +582,7 @@ panic в golang-app
 - **LogsQL-выражение обязано содержать `stats`-pipe.** `vmalert-logs` работает со статистикой (`count()`, `sum()`, `quantile()`, `histogram()`), а не с сырыми строками.
 - **`type: vlogs` обязателен** на уровне группы, иначе правила будут валидироваться как PromQL.
 - **Time-фильтр задан явно** (`_time: 5m`) — это окно, которое сканирует VictoriaLogs.
-- **`includePodLabels: true`** у `vlagent` — иначе `kubernetes.pod_labels.app` в правилах не появится.
+- **`includePodLabels`** у `vlagent` (по умолчанию `true`) — иначе `kubernetes.pod_labels.app` в правилах не появится.
 - **Отключение Grafana Alerting** — два флага: `[alerting] enabled: false` и `[unified_alerting] enabled: false`.
 - **Токен Telegram** храните в Secret и подключайте через `bot_token_file`, а не `bot_token`.
 - **`remoteWrite.disablePathAppend: "true"`** у `vmalert-logs` — URL в `remoteWrite` задан с полным путём (`/api/v1/write`), его не нужно дописывать повторно.

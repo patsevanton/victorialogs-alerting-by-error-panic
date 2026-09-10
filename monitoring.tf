@@ -30,7 +30,6 @@ locals {
 
   # ----- vmks (victoria-metrics-k8s-stack) -----
   vmks_retention = "14d"
-  vmks_pv_size   = "20Gi"
 
   # ----- Values, отрендеренные из шаблонов *.tftpl -----
   vmks_values = templatefile("${path.module}/values/vmks-values.yaml.tftpl", {
@@ -38,7 +37,6 @@ locals {
     alertmanager_fqdn = local.alertmanager_fqdn
     vls_server_url    = local.vls_server_url
     vmks_retention    = local.vmks_retention
-    vmks_pv_size      = local.vmks_pv_size
     telegram_chat_id  = var.telegram_chat_id
   })
 

@@ -7,8 +7,6 @@ remoteWrite:
   - url: ${vls_server_url}
 
 collector:
-  # Лейблы пода попадают в kubernetes.pod_labels.* — по ним фильтруют алерты.
-  includePodLabels: true
   # Не собираем логи самого коллектора (иначе будет шум).
   # `HOSTNAME` — плейсхолдер самого vlagent, экранирован от Terraform-шаблона.
   excludeFilter: "kubernetes.pod_name:=%%{HOSTNAME}"

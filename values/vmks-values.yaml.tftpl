@@ -2,7 +2,7 @@
 # Генерируется Terraform'ом из values/vmks-values.yaml.tftpl через templatefile()
 # (monitoring.tf). Параметры приходят из local.* / var.*.
 #
-# Правила приходят из CRD `VMRule` (selectAllByDefault: true), datasource — VictoriaLogs.
+# Правила приходят из CRD `VMRule`, datasource — VictoriaLogs.
 #
 # vmalert пишет состояние алертов (ALERTS, ALERTS_FOR_STATE) в VictoriaMetrics:
 # VictoriaLogs сам метрики не хранит, поэтому remoteWrite/remoteRead остаются
@@ -67,15 +67,9 @@ vmsingle:
   enabled: true
   spec:
     # VictoriaLogs сам метрики не хранит, поэтому vmalert пишет состояние
-    # алертов сюда. Достаточно single-node.
+    # алертов сюда. Достаточно single-node. enabled и storage (20Gi) — дефолты
+    # чарта, оставлены как есть.
     retentionPeriod: "${vmks_retention}"
-    storage:
-      resources:
-        requests:
-          storage: ${vmks_pv_size}
-
-vmcluster:
-  enabled: false
 
 # vmalert (встроенный) исполняет только дефолтные PromQL-правила vmks против
 # vmsingle (datasource чарт подставляет сам из vmsingle). Дефолтные правила
