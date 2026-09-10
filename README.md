@@ -11,9 +11,9 @@
 Ключевые решения, которые мы разберём:
 
 - **VictoriaLogs** как хранилище логов (single-node, Helm-чарт `victoria-logs-single`);
-- **vlagent** (DaemonSet, чарт `victoria-logs-collector`) — собирает логи всех подов и отдаёт их в VictoriaLogs;
-- **отдельный `VMAlert` (`vmalert-logs`)** исполняет правила, написанные на **LogsQL** (а не PromQL), и смотрит на VictoriaLogs как на datasource; встроенный `vmalert` из vmks исполняет только штатные PromQL-правила стека;
-- правила живут **в CRD `VMRule`**, а не в Grafana UI: единственный source of truth — манифест `vmalert-rules`; управление алертами через Grafana UI (`unified_alerting`) **отключено** — далее будет написано почему;
+- **Vlagent** (DaemonSet, чарт `victoria-logs-collector`) — собирает логи всех подов и отдаёт их в VictoriaLogs;
+- **Отдельный `VMAlert` (`vmalert-logs`)** исполняет правила, написанные на **LogsQL** (а не PromQL), и смотрит на VictoriaLogs как на datasource; встроенный `vmalert` из vmks исполняет только штатные PromQL-правила стека;
+- Правила живут в коде, а не в Grafana UI. Далее будет написано почему;
 - **Alertmanager шлёт алерты напрямую в Telegram** через нативный `telegram_configs`, без промежуточного bridge;
 
 ```mermaid
