@@ -48,14 +48,19 @@ flowchart TD
 
 - **Kubernetes-кластер** — в примере Yandex Managed Service for Kubernetes (master управляемый, ноды без публичных IP, исходящий трафик через NAT-шлюз);
 - **Ingress-контроллер** — Traefik с публичным LoadBalancer;
-- **Инструменты** — Terraform, `yc` CLI, `kubectl`, `helm`.
-
-Сеть, кластер и Traefik создаёт Terraform (`terraform init && terraform apply`). Он же рендерит на диск values-файлы (`values/*.yaml` из шаблонов `*.tftpl`) и Secret с токеном Telegram-бота (`telegram-bot-token-secret.yaml`). Секреты задаются в `terraform.tfvars` (файл в `.gitignore`): `folder_id`, `telegram_bot_token`, `telegram_chat_id`.
-
-После `terraform apply` подключаемся к кластеру и применяем Secret с токеном до установки vmks (Alertmanager монтирует его при старте):
+- **Инструменты** — `yc` CLI, `kubectl`, `helm`.
 
 ```bash
-eval "$(terraform output -raw k8s_cluster_credentials_command)"
+cat > telegram-bot-token-secret.yaml <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: telegram-bot-token
+  namespace: vmks
+type: Opaque
+data:
+  bot-token: <BOT_TOKEN_BASE64>
+EOF
 kubectl apply -f telegram-bot-token-secret.yaml
 ```
 
