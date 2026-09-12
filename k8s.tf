@@ -1,7 +1,7 @@
 # Сервисный аккаунт для управления Kubernetes.
 resource "yandex_iam_service_account" "sa_k8s_editor" {
   folder_id = var.folder_id
-  name      = "sa-k8s-editor"
+  name      = "sa-k8s-victorialogs-alerting-by-error-panic"
 }
 
 resource "yandex_resourcemanager_folder_iam_member" "sa_k8s_editor_permissions" {
