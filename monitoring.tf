@@ -14,7 +14,7 @@ locals {
   # vmks ставится первым: vmServiceScrape (см. vls-values.yaml.tftpl) уводит
   # собственные метрики VictoriaLogs в vmagent/vmsingle из victoria-metrics-k8s-stack.
   vls_retention      = "14d"
-  vls_storage_class  = "yc-network-ssd"
+  vls_storage_class  = "yc-network-hdd"
   vls_pv_size        = "20Gi"
   vls_cpu_request    = "100m"
   vls_memory_request = "128Mi"
