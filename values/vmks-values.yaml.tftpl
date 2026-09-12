@@ -23,6 +23,9 @@ grafana:
 defaultDatasources:
   victoriametrics:
     datasources:
+      # Оставляем один plain-prometheus datasource для метрик: в этой статье
+      # Grafana — только читающий клиент, продвинутый плагин
+      # victoriametrics-metrics-datasource (MetricsQL-автокомплит и т.п.) не нужен.
       - name: VictoriaMetrics
         type: prometheus
         access: proxy

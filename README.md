@@ -19,7 +19,7 @@
 ```mermaid
 flowchart TD
     Go["golang-app<br/>(panic, fatal, error)"] -->|stdout + stderr| Vlagent["vlagent (DaemonSet)"]
-    Nuxt["nuxt-app<br/>(500, unhandled)"] -->|stdout| Vlagent
+    Nuxt["nuxt-app<br/>(500, unhandled)"] -->|stderr| Vlagent
     Vlagent -->|insert/native| VL[("VictoriaLogs<br/>vls-server:9428")]
 
     VL -->|LogsQL| VMA["vmalert-logs (VMAlert)<br/>rules: VMRule vmalert-rules"]
@@ -41,6 +41,34 @@ flowchart TD
 4. `vmalert-logs` раз в `1m` исполняет LogsQL-запросы из `VMRule` против VictoriaLogs (`/select/logsql/stats_query`).
 5. Сработавшее правило уходит в Alertmanager.
 6. Alertmanager через `telegram_configs` отправляет сообщение напрямую в Telegram-бота.
+
+## Предварительные требования
+
+Статья предполагает, что у вас уже есть рабочая среда:
+
+- **Kubernetes-кластер** — в примере Yandex Managed Service for Kubernetes (master управляемый, ноды без публичных IP, исходящий трафик через NAT-шлюз);
+- **Ingress-контроллер** — Traefik с публичным LoadBalancer;
+- **Инструменты** — Terraform, `yc` CLI, `kubectl`, `helm`.
+
+Сеть, кластер и Traefik создаёт Terraform (`terraform init && terraform apply`). Он же рендерит на диск values-файлы (`values/*.yaml` из шаблонов `*.tftpl`) и Secret с токеном Telegram-бота (`telegram-bot-token-secret.yaml`). Секреты задаются в `terraform.tfvars` (файл в `.gitignore`): `folder_id`, `telegram_bot_token`, `telegram_chat_id`.
+
+После `terraform apply` подключаемся к кластеру и применяем Secret с токеном до установки vmks (Alertmanager монтирует его при старте):
+
+```bash
+eval "$(terraform output -raw k8s_cluster_credentials_command)"
+kubectl apply -f telegram-bot-token-secret.yaml
+```
+
+Дальше в статье разворачиваются такие компоненты (все, кроме приложений, — в namespace `vmks`):
+
+| Компонент | Чарт / манифест | Роль |
+| --- | --- | --- |
+| victoria-metrics-k8s-stack (vmks) | `victoria-metrics-k8s-stack` | vmagent, vmsingle, встроенный vmalert, Alertmanager, Grafana |
+| VictoriaLogs | `victoria-logs-single` | хранилище логов (single-node) |
+| vlagent | `victoria-logs-collector` | сбор логов подов (DaemonSet) |
+| vmalert-logs | `manifests/vmalert-logs.yaml` | исполняет LogsQL-правила из `VMRule` |
+| VMRule | `manifests/vmalert-rules.yaml` | правила алертов на LogsQL |
+| golang-app / nuxt-app | `manifests/golang-app.yaml`, `manifests/nuxt-app.yaml` | приложения, роняющие panic/error (namespace `apps`) |
 
 ## Шаг 1. victoria-metrics-k8s-stack (vmks)
 
@@ -101,6 +129,13 @@ spec:
 - `vmalert-logs` берёт LogsQL-выражения из `VMRule` и выполняет их в VictoriaLogs по адресу `datasource.url`.
 - `ruleSelector: type: logs-to-metrics` — выполняет только `VMRule` с этим лейблом.
 - `remoteWrite`/`remoteRead` — `vmalert-logs` пишет состояние алертов в `vmsingle` и восстанавливает его оттуда при рестарте.
+
+Применяем `vmalert-logs` и правила `VMRule` после того, как vmks поднят и оператор с CRD `VMAlert`/`VMRule` доступны:
+
+```bash
+kubectl apply -f manifests/vmalert-logs.yaml
+kubectl apply -f manifests/vmalert-rules.yaml
+```
 
 ### Выключаем алерты по логам через Grafana UI
 
@@ -241,7 +276,7 @@ mux.HandleFunc("/fatal", func(w http.ResponseWriter, r *http.Request) {
 
 ### Nuxt: `apps/nuxt-app`
 
-Приложение Nitro/Nuxt логирует ошибки серверных хендлеров в `stdout` и содержит эндпоинты под каждый класс ошибок:
+Приложение Nitro/Nuxt логирует ошибки серверных хендлеров через `console.error` (то есть в `stderr`) и содержит эндпоинты под каждый класс ошибок:
 
 | Эндпоинт      | Что происходит в проде                          | Что ловится |
 | ------------- | ----------------------------------------------- | ----------- |
@@ -420,6 +455,22 @@ spec:
 
 Почему `type: vlogs` и `interval` на уровне группы: по умолчанию `vmalert` считает правила `prometheus`-типа и валидирует выражения как PromQL. `type: vlogs` говорит ему, что выражения написаны на LogsQL. Time-фильтр в выражениях задан явно (`_time: 5m`) — именно это окно сканирует VictoriaLogs на каждом исполнении.
 
+#### `interval` против `_time`: два независимых параметра
+
+У группы `interval: 1m`, а внутри выражения стоит `_time: 5m`. Это не дублирование — они управляют разными вещами:
+
+- `interval: 1m` (или глобальный `evaluationInterval: 1m` у `VMAlert`) — **как часто** `vmalert-logs` исполняет группу. Раз в минуту он делает запрос к VictoriaLogs и обновляет состояние алерта.
+- `_time: 5m` — **какое окно данных** сканирует каждый такой запрос. Каждую минуту считается статистика по логам за последние 5 минут.
+
+Почему окно больше интервала: одиночный всплеск ошибок в одной минутной выборке может не попасть ровно в границы окна или оказаться единичным шумом. Окно `5m` сглаживает — правило срабатывает устойчиво, а не дёргается на каждой случайной строке. Цена — каждый запрос сканирует 5 минут логов вместо 1, то есть грузит VictoriaLogs пропорционально ширине окна, а не частоте.
+
+Что будет, если они разъедутся:
+
+- `interval` больше `_time` (например, раз в 5m исполняем, но смотрим только 1m) — между исполнениями образуются «слепые» промежутки: событие, случившееся между запусками, может быть пропущено, а алерт моргает.
+- `interval` сильно меньше `_time` (например, раз в 10s, окно 5m) — почти каждое исполнение пересчитывает одни и те же 5 минут. Это лишняя нагрузка на VictoriaLogs без выигрыша в свежести (алерт всё равно ждёт `for`), поэтому интервал меньше 1m для логов брать не стоит.
+
+У нас обе величины выровнены с запасом на `for`: критичные правила исполняются раз в минуту с окном 5m и `for: 1m`, поэтому между появлением ошибки в логе и FIRING-сообщением проходит не больше пары минут.
+
 `stats`-pipe обязателен: `vmalert-logs` забирает из VictoriaLogs не сами строки, а результаты `/select/logsql/stats_query` (счётчики, гистограммы и т.д.) в формате Prometheus API — именно их он сравнивает с порогом.
 
 Почему для Nuxt отдельные алерты (`NuxtServerError`, `NuxtUnhandledRejection`, `NuxtUnhandledPromiseRejection`, `NuxtFatalLog`, `NuxtBadGateway`), а не один с общей регуляркой:
@@ -558,7 +609,11 @@ kubectl -n vmks port-forward svc/vmalert-vmalert-logs 8080:8080
 # API: http://localhost:8080/api/v1/alerts
 ```
 
-> Имя сервиса отдельного `vmalert-logs` чарт оператора строит как `vmalert-vmalert-logs` (уточните через `kubectl get svc -n vmks`).
+> Имя сервиса отдельного `vmalert-logs` чарт оператора строит как `vmalert-vmalert-logs`. Уточнить можно командой:
+>
+> ```bash
+> kubectl get svc -n vmks | grep vmalert
+> ```
 
 Через `1m` + `for: 1m` в Telegram приходит сообщение вида:
 
