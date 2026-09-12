@@ -53,7 +53,7 @@ helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-m
   --wait --values values/vmks-values.yaml
 ```
 
-Ключевые части `values/vmks-values.yaml.tftpl`:
+Ключевые части values для victoria-metrics-k8s-stack:
 
 ```yaml
 # Встроенный vmalert исполняет только штатные PromQL-правила vmks.
@@ -90,20 +90,17 @@ spec:
   ruleSelector:
     matchLabels:
       type: logs-to-metrics
-  extraArgs:
-    remoteWrite.disablePathAppend: "true"
   remoteWrite:
-    url: http://vmsingle-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:8428/api/v1/write
+    url: http://vmsingle-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:8428
   remoteRead:
     url: http://vmsingle-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:8428
   notifiers:
     - url: http://vmalertmanager-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:9093
 ```
 
-- `datasource.url` — read-эндпоинт VictoriaLogs. `vmalert-logs` шлёт туда LogsQL-запросы.
-- `ruleSelector: type: logs-to-metrics` — берёт только `VMRule` с этим лейблом (именно он стоит в `manifests/vmalert-rules.yaml`).
+- `vmalert-logs` берёт LogsQL-выражения из `VMRule` и выполняет их в VictoriaLogs по адресу `datasource.url`.
+- `ruleSelector: type: logs-to-metrics` — выполняет только `VMRule` с этим лейблом.
 - `remoteWrite`/`remoteRead` — `vmalert-logs` пишет состояние алертов в `vmsingle` и восстанавливает его оттуда при рестарте.
-- `extraArgs.remoteWrite.disablePathAppend: "true"` — `vmalert-logs` не дописывает `/api/v1/write` к URL из `remoteWrite` (там путь уже задан полностью).
 
 ### Выключаем алерты по логам через Grafana UI
 
@@ -581,7 +578,6 @@ panic в golang-app
 - **`includePodLabels`** у `vlagent` (по умолчанию `true`) — иначе `kubernetes.pod_labels.app` в правилах не появится.
 - **Отключение алертов по логам через Grafana UI** — флаг `jsonData.manageAlerts: false` только для datasource VictoriaLogs; алерты по логам ведём через `VMRule` + `vmalert-logs`, по метрикам — через UI как обычно.
 - **Токен Telegram** храните в Secret и подключайте через `bot_token_file`, а не `bot_token`.
-- **`remoteWrite.disablePathAppend: "true"`** у `vmalert-logs` — URL в `remoteWrite` задан с полным путём (`/api/v1/write`), его не нужно дописывать повторно.
 
 ## Заключение
 
