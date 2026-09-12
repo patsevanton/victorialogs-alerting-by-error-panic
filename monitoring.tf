@@ -28,15 +28,11 @@ locals {
   vlc_cpu_limit      = "200m"
   vlc_memory_limit   = "256Mi"
 
-  # ----- vmks (victoria-metrics-k8s-stack) -----
-  vmks_retention = "14d"
-
   # ----- Values, отрендеренные из шаблонов *.tftpl -----
   vmks_values = templatefile("${path.module}/values/vmks-values.yaml.tftpl", {
     grafana_fqdn      = local.grafana_fqdn
     alertmanager_fqdn = local.alertmanager_fqdn
     vls_server_url    = local.vls_server_url
-    vmks_retention    = local.vmks_retention
     telegram_chat_id  = var.telegram_chat_id
   })
 
