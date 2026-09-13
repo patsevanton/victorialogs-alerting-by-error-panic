@@ -33,10 +33,11 @@ terraform apply
 - `telegram-bot-token-secret.yaml`;
 - `manifests/mihomo-proxy.yaml`.
 
-Secret с токеном и mihomo-прокси должны существовать в кластере **до** `helm install vmks`: Alertmanager монтирует Secret при старте, а Telegram доступен только через прокси. Подключаемся к кластеру и применяем их:
+Secret с токеном и mihomo-прокси должны существовать в кластере **до** `helm install vmks`: Alertmanager монтирует Secret при старте, а Telegram доступен только через прокси. Secret объявлен в namespace `vmks`, который создаётся на Шаге 1 (`--create-namespace`), поэтому до применения Secret создаём namespace вручную. Подключаемся к кластеру и применяем их:
 
 ```bash
 eval "$(terraform output -raw k8s_cluster_credentials_command)"
+kubectl create namespace vmks
 kubectl apply -f telegram-bot-token-secret.yaml
 kubectl apply -f manifests/mihomo-proxy.yaml
 ```
