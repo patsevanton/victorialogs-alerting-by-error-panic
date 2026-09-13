@@ -88,6 +88,19 @@ helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-m
 
 Ключевые части values для victoria-metrics-k8s-stack:
 
+В стеке два `vmalert`'а, и их стоит различать:
+
+- **обычный (встроенный)** — идёт в составе чарта vmks и исполняет PromQL-правила против `vmsingle`;
+- **дополнительный `vmalert-logs`** — отдельный `VMAlert` из [`manifests/vmalert-logs.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-logs.yaml), исполняет LogsQL-правила против VictoriaLogs:
+
+```yaml
+# Дополнительный VMAlert под LogsQL-правила (manifests/vmalert-logs.yaml):
+#   datasource: http://vls-server.vmks.svc.cluster.local:9428   # VictoriaLogs
+#   ruleSelector:
+#     matchLabels:
+#       type: logs-to-metrics                                    # берёт только LogsQL-VMRule
+```
+
 ```yaml
 # Встроенный vmalert исполняет PromQL-правила против vmsingle.
 # LogsQL-правила исполняет отдельный VMAlert (manifests/vmalert-logs.yaml).
@@ -128,7 +141,7 @@ defaultDatasources:
         manageAlerts: false
 ```
 
-Плагин `victoriametrics-logs-datasource` объявляет поддержку Alerting (`"alerting": true`) и по умолчанию показывает переключатель «Manage alert rules in Alerting UI». Флаг `manageAlerts: false` в `jsonData` снимает его — для VictoriaLogs в Alerting UI больше нельзя создать или изменить правило, при этом Explore и дашборды продолжают работать. Алерты по логам живут только в `VMRule` и исполняются `vmalert-logs`.
+Плагин `victoriametrics-logs-datasource` объявляет поддержку Alerting (`alerting: true`) и по умолчанию показывает переключатель «Manage alert rules in Alerting UI». Флаг `manageAlerts: false` в `jsonData` снимает его — для VictoriaLogs в Alerting UI больше нельзя создать или изменить правило, при этом Explore и дашборды продолжают работать. Алерты по логам живут только в `VMRule` и исполняются `vmalert-logs`.
 
 #### Почему не через Grafana UI
 
