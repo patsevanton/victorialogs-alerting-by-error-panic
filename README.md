@@ -461,7 +461,7 @@ spec:
 
 ## Шаг 6. Alertmanager → Telegram напрямую
 
-Prometheus Alertmanager умеет нативный `telegram_configs`, поэтому bridge не нужен. Токен кладём в Secret, а в конфиг передаём путь к нему через `bot_token_file` — токен не светится в конфиге.
+Токен кладём в Secret, а в конфиг передаём путь к нему через `bot_token_file` — токен не светится в конфиге.
 
 ```yaml
 # telegram-bot-token-secret.yaml
