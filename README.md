@@ -170,11 +170,6 @@ helm upgrade --install vls vm/victoria-logs-single \
 nameOverride: vls
 
 server:
-  retentionPeriod: 14d
-  persistentVolume:
-    enabled: true
-    storageClassName: yc-network-hdd
-    size: 20Gi
   # VictoriaLogs отдаёт собственные метрики на /metrics. Их скрейпит vmagent из
   # victoria-metrics-k8s-stack (ставится первым) через этот VMServiceScrape и пишет
   # в vmsingle. Поэтому vmks должен быть уже поднят до установки VictoriaLogs.

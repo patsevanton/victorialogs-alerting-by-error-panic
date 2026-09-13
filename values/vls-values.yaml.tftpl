@@ -4,11 +4,6 @@
 nameOverride: ${vls_name_override}
 
 server:
-  retentionPeriod: ${vls_retention}
-  persistentVolume:
-    enabled: true
-    storageClassName: ${vls_storage_class}
-    size: ${vls_pv_size}
   # VictoriaLogs отдаёт собственные метрики на /metrics. Их скрейпит vmagent из
   # victoria-metrics-k8s-stack (ставится первым) через этот VMServiceScrape и пишет
   # в vmsingle. Поэтому vmks должен быть уже поднят до установки VictoriaLogs.

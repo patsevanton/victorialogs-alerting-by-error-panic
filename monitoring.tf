@@ -13,12 +13,9 @@ locals {
   # ----- VictoriaLogs single-node (victoria-logs-single) -----
   # vmks ставится первым: vmServiceScrape (см. vls-values.yaml.tftpl) уводит
   # собственные метрики VictoriaLogs в vmagent/vmsingle из victoria-metrics-k8s-stack.
-  vls_retention      = "14d"
-  vls_storage_class  = "yc-network-hdd"
-  vls_pv_size        = "20Gi"
 
   # ----- vlagent (victoria-logs-collector) -----
-  vlc_name_override  = "vlc"
+  vlc_name_override = "vlc"
 
   # ----- Values, отрендеренные из шаблонов *.tftpl -----
   vmks_values = templatefile("${path.module}/values/vmks-values.yaml.tftpl", {
@@ -29,15 +26,12 @@ locals {
   })
 
   vls_values = templatefile("${path.module}/values/vls-values.yaml.tftpl", {
-    vls_name_override  = local.vls_name_override
-    vls_retention      = local.vls_retention
-    vls_storage_class  = local.vls_storage_class
-    vls_pv_size        = local.vls_pv_size
+    vls_name_override = local.vls_name_override
   })
 
   vlc_values = templatefile("${path.module}/values/vlc-values.yaml.tftpl", {
-    vlc_name_override  = local.vlc_name_override
-    vls_server_url     = local.vls_server_url
+    vlc_name_override = local.vlc_name_override
+    vls_server_url    = local.vls_server_url
   })
 
   # Secret с токеном Telegram-бота. Рендерится на диск, применяется вручную
