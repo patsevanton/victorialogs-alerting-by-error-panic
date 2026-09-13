@@ -10,13 +10,12 @@
 
 Ключевые решения, которые мы разберём:
 
-- **VictoriaLogs** как хранилище логов (single-node, Helm-чарт `victoria-logs-single`);
-- **Vlagent** (DaemonSet, чарт `victoria-logs-collector`) — собирает логи всех подов и отдаёт их в VictoriaLogs;
-- **Отдельный `VMAlert` (`vmalert-logs`)** исполняет правила, написанные на **LogsQL** (а не PromQL), и смотрит на VictoriaLogs как на datasource; встроенный `vmalert` из vmks исполняет только штатные PromQL-правила стека;
-- Правила живут в коде, а не в Grafana UI. Далее будет написано почему;
-- **Alertmanager шлёт алерты напрямую в Telegram** через нативный `telegram_configs`, без промежуточного bridge;
+- **VictoriaLogs как хранилище логов.** Логи — не временные ряды, поэтому хранилище отдельное от метрик;
+- **Отдельный `vmalert` под LogsQL (`vmalert-logs`).** Встроенный `vmalert` из vmks исполняет только PromQL-правила стека, поэтому логи ведёт второй `vmalert` с VictoriaLogs как datasource;
+- **Правила живут в коде, а не в Grafana UI.** Почему — разберём ниже;
+- **Alertmanager шлёт алерты напрямую в Telegram** через нативный `telegram_configs`, без промежуточного bridge.
 
-[Архитектура](архитектура.png)
+![Архитектура](архитектура.png)
 
 Поток данных:
 
@@ -626,13 +625,8 @@ panic в golang-app
 
 ## Важные оговорки
 
-- **VictoriaLogs не хранит метрики.** `vmalert-logs` пишет состояние алертов в `vmsingle` (VictoriaMetrics) через `remoteWrite`/`remoteRead`. Без этого состояние не переживёт рестарт `vmalert-logs`.
-- **LogsQL-выражение обязано содержать `stats`-pipe.** `vmalert-logs` работает со статистикой (`count()`, `sum()`, `quantile()`, `histogram()`), а не с сырыми строками.
-- **`type: vlogs` обязателен** на уровне группы, иначе правила будут валидироваться как PromQL.
-- **Time-фильтр задан явно** (`_time: 2m`) — это окно, которое сканирует VictoriaLogs.
-- **`/insert/native` — нативный бинарный протокол VictoriaLogs: он используется по умолчанию, не требует format и разбора на стороне приёмника, поэтому даёт минимальные накладные расходы по CPU и сети по сравнению с JSON/line-протоколами. Внешние системы (Fluent Bit, Vector, ClickHouse) требуют явного format: jsonline.
-- **Отключение алертов по логам через Grafana UI** — флаг `jsonData.manageAlerts: false` только для datasource VictoriaLogs; алерты по логам ведём через `VMRule` + `vmalert-logs`, по метрикам — через UI как обычно.
-- **Токен Telegram** храните в Secret и подключайте через `bot_token_file`, а не `bot_token`.
+- **Алерт по логам — это агрегат по окну, а не событие.** Правило обязано содержать `stats`-pipe и явный `_time` (окно сканирования), а `type: vlogs` на уровне группы переключает его валидацию с PromQL на LogsQL. Каждый такой запрос — полноценное сканирование окна в VictoriaLogs, поэтому правила ведём через `VMRule`, а не через Grafana UI.
+- **VictoriaLogs не хранит метрики.** `vmalert-logs` пишет состояние алертов в `vmsingle` через `remoteWrite`/`remoteRead`, иначе оно не переживёт рестарт `vmalert-logs`.
 
 ## Заключение
 
