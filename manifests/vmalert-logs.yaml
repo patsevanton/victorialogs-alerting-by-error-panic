@@ -6,6 +6,8 @@ metadata:
 spec:
   datasource:
     url: http://vls-server.vmks.svc.cluster.local:9428
+  # Интервал по умолчанию для групп правил: LogsQL-запросы vmalert-logs
+  # выполняет раз в минуту. Группа может переопределить его своим interval.
   evaluationInterval: 1m
   selectAllByDefault: false
   ruleSelector:

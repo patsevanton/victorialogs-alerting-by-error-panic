@@ -44,11 +44,11 @@ flowchart TD
 
 ## Предварительные требования
 
-Статья предполагает, что у вас уже есть рабочая среда:
+Предполагается, что у вас уже есть рабочая среда:
 
-- **Kubernetes-кластер** — в примере Yandex Managed Service for Kubernetes (master управляемый, ноды без публичных IP, исходящий трафик через NAT-шлюз);
-- **Ingress-контроллер** — Traefik с публичным LoadBalancer;
-- **Инструменты** — `yc` CLI, `kubectl`, `helm`.
+- **Kubernetes-кластер**;
+- **Ingress-контроллер** чтобы зайти в Grafana;
+- **Инструменты** — `kubectl`, `helm`.
 
 ```bash
 cat > telegram-bot-token-secret.yaml <<EOF
@@ -107,7 +107,7 @@ vmalert:
 Здесь важно:
 
 - Встроенный `vmalert` берёт все `VMRule`, кроме LogsQL-правил — для этого `ruleSelector` отфильтровывает по `type: logs-to-metrics` через «обратный» `matchExpressions` (`NotIn`). В итоге он исполняет и дефолтные PromQL-правила стека, и кастомный PromQL-`VMRule`, созданный вручную без специальных лейблов. LogsQL-правила он не трогает.
-- `vmsingle` включён (дефолт чарта) — сюда `vmalert-logs` пишет `ALERTS`/`ALERTS_FOR_STATE` через `remoteWrite`/`remoteRead`. В него же `vmagent` пишет скрейпнутые метрики, в том числе метрики VictoriaLogs. Блок `vmsingle` в values отсутствует — используется целиком дефолт чарта (`enabled`, `storage 20Gi`, `retentionPeriod "1"`).
+- `vmsingle` включён (дефолт чарта) — сюда `vmalert-logs` пишет `ALERTS`/`ALERTS_FOR_STATE` через `remoteWrite`/`remoteRead`. В него же `vmagent` пишет скрейпнутые метрики, в том числе метрики VictoriaLogs.
 - `alertmanager` включён (дефолт чарта) и настраивается в отдельном блоке `alertmanager.*` с нативным `telegram_configs` — подробнее в Шаге 6.
 
 Отдельный `VMAlert` `vmalert-logs` объявлен манифестом [`manifests/vmalert-logs.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-logs.yaml):
