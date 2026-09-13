@@ -89,26 +89,7 @@ vmalert:
 
 #### Отключить алерты через UI нельзя
 
-Плагин `victoriametrics-logs-datasource` объявляет поддержку Alerting (`alerting: true`), поэтому VictoriaLogs можно выбрать источником запроса в **Grafana-managed** алерте — и создать правило через обычный UI. Полностью запретить алерты по логам через UI на уровне datasource нельзя.
-
-Единственный доступный флаг — `manageAlerts: false` в `jsonData`:
-
-```yaml
-defaultDatasources:
-  extra:
-    - name: VictoriaLogs
-      access: proxy
-      isDefault: false
-      uid: VictoriaLogs
-      type: victoriametrics-logs-datasource
-      url: http://vls-server.vmks.svc.cluster.local:9428
-      jsonData:
-        manageAlerts: false
-```
-
-Но он управляет только **datasource-managed** правилами: снимает переключатель «Manage alert rules in Alerting UI» и запрещает писать правила в ruler-API самого datasource. Для VictoriaLogs этот режим через Grafana и так не работает — LogsQL-правила исполняет отдельный `vmalert-logs`, а не встроенный в Grafana ruler. На **Grafana-managed** алерты флаг не влияет: их Grafana разрешает создавать всегда, независимо от `manageAlerts`. В итоге алерт по логам через UI всё равно создаётся (в URL такого правила сегмент `/grafana/`).
-
-Поэтому source of truth для алертов по логам — только `VMRule`, а Grafana остаётся читающим клиентом VictoriaLogs: datasource подключён, логи можно исследовать в Explore и на дашбордах, но алерты мы сознательно ведём в коде.
+Плагин `victoriametrics-logs-datasource` объявляет `alerting: true`, поэтому Grafana разрешает создавать алерты по логам через UI независимо от настроек datasource. `manageAlerts: false` в `jsonData` влияет только на **datasource-managed** правила — для VictoriaLogs они всё равно не работают (LogsQL-правила исполняет отдельный `vmalert-logs`, а не встроенный в Grafana ruler), а **Grafana-managed** алерты флаг не затрагивает. Поэтому source of truth для алертов по логам — `VMRule`, Grafana остаётся читающим клиентом VictoriaLogs.
 
 ## Шаг 2. VictoriaLogs
 
