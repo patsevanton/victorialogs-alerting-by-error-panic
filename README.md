@@ -34,20 +34,6 @@
 - **Ingress-контроллер** чтобы зайти в Grafana;
 - **Инструменты** — `kubectl`, `helm`.
 
-```bash
-cat > telegram-bot-token-secret.yaml <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: telegram-bot-token
-  namespace: vmks
-type: Opaque
-data:
-  bot-token: <BOT_TOKEN_BASE64>
-EOF
-kubectl apply -f telegram-bot-token-secret.yaml
-```
-
 Дальше в статье разворачиваются такие компоненты (все, кроме приложений, — в namespace `vmks`):
 
 | Компонент | Чарт / манифест | Роль |
@@ -56,7 +42,7 @@ kubectl apply -f telegram-bot-token-secret.yaml
 | VictoriaLogs | `victoria-logs-single` | хранилище логов (single-node) |
 | vlagent | `victoria-logs-collector` | сбор логов подов (DaemonSet) |
 | vmalert-logs | `manifests/vmalert-logs.yaml` | исполняет LogsQL-правила из `VMRule` |
-| VMRule | `manifests/vmalert-rules.yaml` | правила алертов на LogsQL |
+| VMRule | `manifests/vmalert-rules-golang.yaml`, `manifests/vmalert-rules-nuxt.yaml` | правила алертов на LogsQL (по файлу на приложение) |
 | golang-app / nuxt-app | `manifests/golang-app.yaml`, `manifests/nuxt-app.yaml` | приложения, роняющие panic/error (namespace `apps`) |
 
 ## Шаг 1. victoria-metrics-k8s-stack (vmks)
@@ -78,15 +64,6 @@ helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-m
 - **дополнительный `vmalert-logs`** — отдельный `VMAlert` из [`manifests/vmalert-logs.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-logs.yaml), исполняет LogsQL-правила против VictoriaLogs:
 
 ```yaml
-# Дополнительный VMAlert под LogsQL-правила (manifests/vmalert-logs.yaml):
-#   datasource: http://vls-server.vmks.svc.cluster.local:9428   # VictoriaLogs
-#   ruleSelector:
-#     matchLabels:
-#       type: logs-to-metrics                                    # берёт только LogsQL-VMRule
-```
-
-```yaml
-# Встроенный vmalert исполняет PromQL-правила против vmsingle.
 # LogsQL-правила исполняет отдельный VMAlert (manifests/vmalert-logs.yaml).
 vmalert:
   enabled: true
@@ -133,7 +110,7 @@ defaultDatasources:
 
 Когда алерты вешает вся команда напрямую из UI, их быстро становится много, и среди них неизбежно появляются неоптимальные. Регулярка по всему тексту без фильтра по поду, счётчик по слишком широкому окну, правило на каждый чих — всё это превращается в постоянные тяжёлые запросы. VictoriaLogs начинает отвечать на десятки таких запросов каждый интервал, CPU и память ноды растут, а к latency самого хранилища добавляется ещё и задержка на алертинг. Один кривой алерт способен грузить систему сильнее, чем весь остальной пайплайн приёма логов.
 
-`VMRule` решает это институционально. Каждое правило — явная строка в `vmalert-rules.yaml`, которую видно в git и которую можно отревьюить до применения в кластер. Видно интервал, запрос, порог, окно `for` — и можно проверить, что у каждого правила стоит узкий фильтр по `kubernetes.pod_labels.app`, а регулярка бьёт только по нужному тексту, не по всему потоку. Дорогой запрос не проскользнёт мимо ревью, а source of truth остаётся один: что в `VMRule`, то и исполняет `vmalert-logs`. Grafana при этом остаётся читающим клиентом VictoriaLogs — datasource подключён, и логи можно исследовать в Explore, но создавать и править алерты по логам через UI нельзя.
+`VMRule` решает это институционально. Каждое правило — явная строка в `vmalert-rules-golang.yaml` или `vmalert-rules-nuxt.yaml`, которую видно в git и которую можно отревьюить до применения в кластер. Видно интервал, запрос, порог, окно `for` — и можно проверить, что у каждого правила стоит узкий фильтр по `kubernetes.pod_labels.app`, а регулярка бьёт только по нужному тексту, не по всему потоку. Дорогой запрос не проскользнёт мимо ревью, а source of truth остаётся один: что в `VMRule`, то и исполняет `vmalert-logs`. Grafana при этом остаётся читающим клиентом VictoriaLogs — datasource подключён, и логи можно исследовать в Explore, но создавать и править алерты по логам через UI нельзя.
 
 ## Шаг 2. VictoriaLogs
 
@@ -224,7 +201,8 @@ spec:
 
 ```bash
 kubectl apply -f manifests/vmalert-logs.yaml
-kubectl apply -f manifests/vmalert-rules.yaml
+kubectl apply -f manifests/vmalert-rules-golang.yaml
+kubectl apply -f manifests/vmalert-rules-nuxt.yaml
 ```
 
 Порядок здесь строгий: vmks создаёт CRD и оператор, VictoriaLogs — datasource, и только после этого применяются `vmalert-logs`/`VMRule`. Приложения (Шаг 4) поднимаются уже при готовом алертинге, поэтому в момент появления первых логов правила уже исполняются.
@@ -327,13 +305,13 @@ kubectl apply -f manifests/nuxt-app.yaml
 
 ## Шаг 5. Правила алертов в VMRule
 
-Правила — это CRD `VMRule` ([`manifests/vmalert-rules.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules.yaml)), который исполняет отдельный `VMAlert` `vmalert-logs`. У `VMRule` стоит лейбл `type: logs-to-metrics` — по нему `vmalert-logs` и выбирает эти правила (`ruleSelector`). Сам `vmalert-logs` и этот `VMRule` уже применены в конце Шага 3; ниже — разбор содержимого правил.
+Правила — это CRD `VMRule`, разбитый на два манифеста по приложениям ([`manifests/vmalert-rules-golang.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-golang.yaml) и [`manifests/vmalert-rules-nuxt.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-nuxt.yaml)), которые исполняет отдельный `VMAlert` `vmalert-logs`. У обоих `VMRule` стоит лейбл `type: logs-to-metrics` — по нему `vmalert-logs` и выбирает эти правила (`ruleSelector`). Разбиение по файлу на приложение упрощает ревью и CODEOWNERS: правки правил golang-app не пересекаются с правками nuxt-app. Сам `vmalert-logs` и оба `VMRule` уже применены в конце Шага 3; ниже — разбор содержимого правил.
 
 ```yaml
 apiVersion: operator.victoriametrics.com/v1beta1
 kind: VMRule
 metadata:
-  name: vmalert-rules
+  name: vmalert-rules-golang
   namespace: vmks
   labels:
     type: logs-to-metrics
@@ -386,7 +364,18 @@ spec:
             severity: warning
             app: golang-app
           # ...
+```
 
+```yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: vmalert-rules-nuxt
+  namespace: vmks
+  labels:
+    type: logs-to-metrics
+spec:
+  groups:
     - name: nuxt-app
       type: vlogs
       # Как часто выполняется LogsQL-запрос этой группы: раз в минуту.

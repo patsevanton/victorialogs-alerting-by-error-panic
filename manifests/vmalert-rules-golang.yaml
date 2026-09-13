@@ -1,0 +1,64 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: vmalert-rules-golang
+  namespace: vmks
+  labels:
+    type: logs-to-metrics
+spec:
+  groups:
+    - name: golang-app
+      type: vlogs
+      # Как часто выполняется LogsQL-запрос этой группы: раз в минуту.
+      # Переопределяет evaluationInterval из VMAlert.
+      interval: 1m
+      rules:
+        - alert: GolangPanicDetected
+          # "panic:" есть и у явного panic("..."), и у runtime-паник
+          # (nil pointer dereference, index out of range) — ловим все разом.
+          expr: |
+            _time: 2m
+              | kubernetes.pod_labels.app:=golang-app
+              | _msg:~"panic:"
+              | stats by (kubernetes.pod_name) count() as panics
+              | filter panics:>0
+          for: 1m
+          labels:
+            severity: critical
+            app: golang-app
+          annotations:
+            summary: "panic в golang-app"
+            description: |
+              Паник у пода {{ index $labels "kubernetes.pod_name" }} за 2m: {{ $value }}.
+              Логи: Kubernetes -> vlagent -> VictoriaLogs.
+
+        - alert: GolangFatalLog
+          expr: |
+            _time: 2m
+              | kubernetes.pod_labels.app:=golang-app
+              | _msg:~"FATAL"
+              | stats count() as fatals
+              | filter fatals:>0
+          for: 1m
+          labels:
+            severity: critical
+            app: golang-app
+          annotations:
+            summary: "log.Fatal в golang-app"
+            description: |
+              Вызов log.Fatalf в golang-app. Фаталов за 2m: {{ $value }}.
+
+        - alert: GolangErrorLog
+          expr: |
+            _time: 2m
+              | kubernetes.pod_labels.app:=golang-app
+              | _msg:~"ERROR"
+              | stats count() as errors
+              | filter errors:>0
+          for: 2m
+          labels:
+            severity: warning
+            app: golang-app
+          annotations:
+            summary: "ошибка в golang-app"
+            description: "Ошибок в логах golang-app за 2m: {{ $value }}."
