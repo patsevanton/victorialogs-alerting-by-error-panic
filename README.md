@@ -204,8 +204,6 @@ collector:
 
 `remoteWrite.url` указывает на VictoriaLogs без пути — vlagent сам отправляет логи на `/insert/native`. Это нативный бинарный протокол VictoriaLogs: он используется по умолчанию, не требует `format` и разбора на стороне приёмника, поэтому даёт минимальные накладные расходы по CPU и сети по сравнению с JSON/line-протоколами. Внешние системы (Fluent Bit, Vector, ClickHouse) требуют явного `format: jsonline`.
 
-`includePodLabels` (по умолчанию `true`) — критично для алертов: каждый лог получает поля `kubernetes.pod_labels.app`, по которым правила отличают `golang-app` от `nuxt-app`. `_stream`-полями по умолчанию становятся `kubernetes.container_name`, `kubernetes.pod_name`, `kubernetes.pod_namespace` — это даёт быструю фильтрацию и группировку в LogsQL.
-
 ### vmalert-logs и правила VMRule
 
 К этому моменту datasource уже существует: vmks поднят (Шаг 1) — значит, CRD `VMAlert`/`VMRule` и оператор доступны; VictoriaLogs слушает `vls-server:9428` (Шаг 2). Осталось поднять отдельный `VMAlert` `vmalert-logs` под LogsQL-правила и применить сами правила.
@@ -647,8 +645,7 @@ panic в golang-app
 - **LogsQL-выражение обязано содержать `stats`-pipe.** `vmalert-logs` работает со статистикой (`count()`, `sum()`, `quantile()`, `histogram()`), а не с сырыми строками.
 - **`type: vlogs` обязателен** на уровне группы, иначе правила будут валидироваться как PromQL.
 - **Time-фильтр задан явно** (`_time: 2m`) — это окно, которое сканирует VictoriaLogs.
-- **`includePodLabels`** у `vlagent` (по умолчанию `true`) — иначе `kubernetes.pod_labels.app` в правилах не появится.
-- **`/insert/native` — нативный формат VictoriaLogs.** `vlagent` отправляет логи на этот эндпоинт по умолчанию: путь в `remoteWrite.url` не указывается, формат задавать не нужно. Внешним приёмникам (Fluent Bit, Vector, ClickHouse) нужен явный `format: jsonline`.
+- **`/insert/native` — нативный бинарный протокол VictoriaLogs: он используется по умолчанию, не требует format и разбора на стороне приёмника, поэтому даёт минимальные накладные расходы по CPU и сети по сравнению с JSON/line-протоколами. Внешние системы (Fluent Bit, Vector, ClickHouse) требуют явного format: jsonline.
 - **Отключение алертов по логам через Grafana UI** — флаг `jsonData.manageAlerts: false` только для datasource VictoriaLogs; алерты по логам ведём через `VMRule` + `vmalert-logs`, по метрикам — через UI как обычно.
 - **Токен Telegram** храните в Secret и подключайте через `bot_token_file`, а не `bot_token`.
 
