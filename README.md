@@ -188,22 +188,18 @@ helm upgrade --install vls vm/victoria-logs-single \
 ```
 
 ```yaml
-# values/vls-values.yaml.tftpl (рендерится в values/vls-values.yaml)
-nameOverride: ${vls_name_override}
+# VictoriaLogs single-node.
+nameOverride: vls
 
 server:
-  retentionPeriod: ${vls_retention}
+  retentionPeriod: 14d
   persistentVolume:
     enabled: true
-    storageClassName: ${vls_storage_class}
-    size: ${vls_pv_size}
-  resources:
-    requests:
-      cpu: ${vls_cpu_request}
-      memory: ${vls_memory_request}
-    limits:
-      cpu: "${vls_cpu_limit}"
-      memory: ${vls_memory_limit}
+    storageClassName: yc-network-hdd
+    size: 20Gi
+  # VictoriaLogs отдаёт собственные метрики на /metrics. Их скрейпит vmagent из
+  # victoria-metrics-k8s-stack (ставится первым) через этот VMServiceScrape и пишет
+  # в vmsingle. Поэтому vmks должен быть уже поднят до установки VictoriaLogs.
   vmServiceScrape:
     enabled: true   # /metrics -> vmagent из vmks -> vmsingle
 ```
@@ -222,23 +218,15 @@ helm upgrade --install vlc vm/victoria-logs-collector \
 ```
 
 ```yaml
-# values/vlc-values.yaml.tftpl (рендерится в values/vlc-values.yaml)
-nameOverride: ${vlc_name_override}
+# vlagent (DaemonSet) собирает логи всех подов и шлёт в VictoriaLogs.
+nameOverride: vlc
 
 remoteWrite:
-  - url: ${vls_server_url}
+  - url: http://vls-server.vmks.svc.cluster.local:9428
 
 collector:
   # Не собираем логи самого коллектора (иначе будет шум).
   excludeFilter: "kubernetes.pod_name:=%{HOSTNAME}"
-
-resources:
-  requests:
-    cpu: ${vlc_cpu_request}
-    memory: ${vlc_memory_request}
-  limits:
-    cpu: ${vlc_cpu_limit}
-    memory: ${vlc_memory_limit}
 ```
 
 `includePodLabels` (по умолчанию `true`) — критично для алертов: каждый лог получает поля `kubernetes.pod_labels.app`, по которым правила отличают `golang-app` от `nuxt-app`. `_stream`-полями по умолчанию становятся `kubernetes.container_name`, `kubernetes.pod_name`, `kubernetes.pod_namespace` — это даёт быструю фильтрацию и группировку в LogsQL.
@@ -361,7 +349,7 @@ spec:
       rules:
         - alert: GolangPanicDetected
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=golang-app
               | _msg:~"panic:"
               | stats by (kubernetes.pod_name) count() as panics
@@ -373,11 +361,11 @@ spec:
           annotations:
             summary: "panic в golang-app"
             description: |
-              Паник у пода {{ index $labels "kubernetes.pod_name" }} за 5m: {{ $value }}.
+              Паник у пода {{ index $labels "kubernetes.pod_name" }} за 2m: {{ $value }}.
 
         - alert: GolangFatalLog
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=golang-app
               | _msg:~"FATAL"
               | stats count() as fatals
@@ -390,7 +378,7 @@ spec:
 
         - alert: GolangErrorLog
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=golang-app
               | _msg:~"ERROR"
               | stats count() as errors
@@ -409,7 +397,7 @@ spec:
       rules:
         - alert: NuxtServerError
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
               | _msg:~"NUXT_ERROR"
               | stats count() as errors
@@ -419,7 +407,7 @@ spec:
 
         - alert: NuxtUnhandledRejection
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
               | _msg:~"NUXT_UNHANDLED"
               | stats count() as unhandled
@@ -429,7 +417,7 @@ spec:
 
         - alert: NuxtUnhandledPromiseRejection
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
               | _msg:~"NUXT_REJECTION"
               | stats count() as rejections
@@ -439,7 +427,7 @@ spec:
 
         - alert: NuxtFatalLog
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
               | _msg:~"NUXT_FATAL"
               | stats count() as fatals
@@ -449,7 +437,7 @@ spec:
 
         - alert: NuxtBadGateway
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
               | _msg:~"NUXT_502"
               | stats count() as badgateways
@@ -460,29 +448,29 @@ spec:
 
 Разбор LogsQL-выражения:
 
-- `_time: 5m` — окно выборки: правила считают события за последние 5 минут;
+- `_time: 2m` — окно выборки: правила считают события за последние 2 минуты;
 - `kubernetes.pod_labels.app:=golang-app` — фильтр по лейблу пода (добавил `vlagent`);
 - `_msg:~"panic:"` — регулярка по тексту сообщения;
 - `stats by (kubernetes.pod_name) count() as panics` — агрегация числа совпадений по поду;
 - `filter panics:>0` — оставляем только группы, где сработало.
 
-Почему `type: vlogs` и `interval` на уровне группы: по умолчанию `vmalert` считает правила `prometheus`-типа и валидирует выражения как PromQL. `type: vlogs` говорит ему, что выражения написаны на LogsQL. Time-фильтр в выражениях задан явно (`_time: 5m`) — именно это окно сканирует VictoriaLogs на каждом исполнении.
+Почему `type: vlogs` и `interval` на уровне группы: по умолчанию `vmalert` считает правила `prometheus`-типа и валидирует выражения как PromQL. `type: vlogs` говорит ему, что выражения написаны на LogsQL. Time-фильтр в выражениях задан явно (`_time: 2m`) — именно это окно сканирует VictoriaLogs на каждом исполнении.
 
 #### `interval` против `_time`: два независимых параметра
 
-У группы `interval: 1m`, а внутри выражения стоит `_time: 5m`. Это не дублирование — они управляют разными вещами:
+У группы `interval: 1m`, а внутри выражения стоит `_time: 2m`. Это не дублирование — они управляют разными вещами:
 
 - `interval: 1m` (или глобальный `evaluationInterval: 1m` у `VMAlert`) — **как часто** `vmalert-logs` исполняет группу. Раз в минуту он делает запрос к VictoriaLogs и обновляет состояние алерта.
-- `_time: 5m` — **какое окно данных** сканирует каждый такой запрос. Каждую минуту считается статистика по логам за последние 5 минут.
+- `_time: 2m` — **какое окно данных** сканирует каждый такой запрос. Каждую минуту считается статистика по логам за последние 2 минуты.
 
-Почему окно больше интервала: одиночный всплеск ошибок в одной минутной выборке может не попасть ровно в границы окна или оказаться единичным шумом. Окно `5m` сглаживает — правило срабатывает устойчиво, а не дёргается на каждой случайной строке. Цена — каждый запрос сканирует 5 минут логов вместо 1, то есть грузит VictoriaLogs пропорционально ширине окна, а не частоте.
+Почему окно больше интервала: одиночный всплеск ошибок в одной минутной выборке может не попасть ровно в границы окна или оказаться единичным шумом. Окно `2m` сглаживает — правило срабатывает устойчиво, а не дёргается на каждой случайной строке. Цена — каждый запрос сканирует 2 минуты логов вместо 1, то есть грузит VictoriaLogs пропорционально ширине окна, а не частоте.
 
 Что будет, если они разъедутся:
 
 - `interval` больше `_time` (например, раз в 5m исполняем, но смотрим только 1m) — между исполнениями образуются «слепые» промежутки: событие, случившееся между запусками, может быть пропущено, а алерт моргает.
 - `interval` сильно меньше `_time` (например, раз в 10s, окно 5m) — почти каждое исполнение пересчитывает одни и те же 5 минут. Это лишняя нагрузка на VictoriaLogs без выигрыша в свежести (алерт всё равно ждёт `for`), поэтому интервал меньше 1m для логов брать не стоит.
 
-У нас обе величины выровнены с запасом на `for`: критичные правила исполняются раз в минуту с окном 5m и `for: 1m`, поэтому между появлением ошибки в логе и FIRING-сообщением проходит не больше пары минут.
+У нас обе величины выровнены с запасом на `for`: критичные правила исполняются раз в минуту с окном 2m и `for: 1m`, поэтому между появлением ошибки в логе и FIRING-сообщением проходит не больше пары минут.
 
 `stats`-pipe обязателен: `vmalert-logs` забирает из VictoriaLogs не сами строки, а результаты `/select/logsql/stats_query` (счётчики, гистограммы и т.д.) в формате Prometheus API — именно их он сравнивает с порогом.
 
@@ -634,7 +622,7 @@ kubectl -n vmks port-forward svc/vmalert-vmalert-logs 8080:8080
 FIRING GolangPanicDetected
 app: golang-app
 panic в golang-app
-Паник у пода golang-app-7d9c6b4f5-x2k9p за 5m: 3.
+Паник у пода golang-app-7d9c6b4f5-x2k9p за 2m: 3.
 ```
 
 ## Важные оговорки
@@ -642,7 +630,7 @@ panic в golang-app
 - **VictoriaLogs не хранит метрики.** `vmalert-logs` пишет состояние алертов в `vmsingle` (VictoriaMetrics) через `remoteWrite`/`remoteRead`. Без этого состояние не переживёт рестарт `vmalert-logs`.
 - **LogsQL-выражение обязано содержать `stats`-pipe.** `vmalert-logs` работает со статистикой (`count()`, `sum()`, `quantile()`, `histogram()`), а не с сырыми строками.
 - **`type: vlogs` обязателен** на уровне группы, иначе правила будут валидироваться как PromQL.
-- **Time-фильтр задан явно** (`_time: 5m`) — это окно, которое сканирует VictoriaLogs.
+- **Time-фильтр задан явно** (`_time: 2m`) — это окно, которое сканирует VictoriaLogs.
 - **`includePodLabels`** у `vlagent` (по умолчанию `true`) — иначе `kubernetes.pod_labels.app` в правилах не появится.
 - **Отключение алертов по логам через Grafana UI** — флаг `jsonData.manageAlerts: false` только для datasource VictoriaLogs; алерты по логам ведём через `VMRule` + `vmalert-logs`, по метрикам — через UI как обычно.
 - **Токен Telegram** храните в Secret и подключайте через `bot_token_file`, а не `bot_token`.

@@ -16,17 +16,9 @@ locals {
   vls_retention      = "14d"
   vls_storage_class  = "yc-network-hdd"
   vls_pv_size        = "20Gi"
-  vls_cpu_request    = "100m"
-  vls_memory_request = "128Mi"
-  vls_cpu_limit      = "1"
-  vls_memory_limit   = "1Gi"
 
   # ----- vlagent (victoria-logs-collector) -----
   vlc_name_override  = "vlc"
-  vlc_cpu_request    = "50m"
-  vlc_memory_request = "64Mi"
-  vlc_cpu_limit      = "200m"
-  vlc_memory_limit   = "256Mi"
 
   # ----- Values, отрендеренные из шаблонов *.tftpl -----
   vmks_values = templatefile("${path.module}/values/vmks-values.yaml.tftpl", {
@@ -41,19 +33,11 @@ locals {
     vls_retention      = local.vls_retention
     vls_storage_class  = local.vls_storage_class
     vls_pv_size        = local.vls_pv_size
-    vls_cpu_request    = local.vls_cpu_request
-    vls_memory_request = local.vls_memory_request
-    vls_cpu_limit      = local.vls_cpu_limit
-    vls_memory_limit   = local.vls_memory_limit
   })
 
   vlc_values = templatefile("${path.module}/values/vlc-values.yaml.tftpl", {
     vlc_name_override  = local.vlc_name_override
     vls_server_url     = local.vls_server_url
-    vlc_cpu_request    = local.vlc_cpu_request
-    vlc_memory_request = local.vlc_memory_request
-    vlc_cpu_limit      = local.vlc_cpu_limit
-    vlc_memory_limit   = local.vlc_memory_limit
   })
 
   # Secret с токеном Telegram-бота. Рендерится на диск, применяется вручную

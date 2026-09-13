@@ -10,11 +10,3 @@ collector:
   # Не собираем логи самого коллектора (иначе будет шум).
   # `HOSTNAME` — плейсхолдер самого vlagent, экранирован от Terraform-шаблона.
   excludeFilter: "kubernetes.pod_name:=%%{HOSTNAME}"
-
-resources:
-  requests:
-    cpu: ${vlc_cpu_request}
-    memory: ${vlc_memory_request}
-  limits:
-    cpu: ${vlc_cpu_limit}
-    memory: ${vlc_memory_limit}

@@ -17,7 +17,7 @@ spec:
           # "panic:" есть и у явного panic("..."), и у runtime-паник
           # (nil pointer dereference, index out of range) — ловим все разом.
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=golang-app
               | _msg:~"panic:"
               | stats by (kubernetes.pod_name) count() as panics
@@ -29,12 +29,12 @@ spec:
           annotations:
             summary: "panic в golang-app"
             description: |
-              Паник у пода {{ index $labels "kubernetes.pod_name" }} за 5m: {{ $value }}.
+              Паник у пода {{ index $labels "kubernetes.pod_name" }} за 2m: {{ $value }}.
               Логи: Kubernetes -> vlagent -> VictoriaLogs.
 
         - alert: GolangFatalLog
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=golang-app
               | _msg:~"FATAL"
               | stats count() as fatals
@@ -46,11 +46,11 @@ spec:
           annotations:
             summary: "log.Fatal в golang-app"
             description: |
-              Вызов log.Fatalf в golang-app. Фаталов за 5m: {{ $value }}.
+              Вызов log.Fatalf в golang-app. Фаталов за 2m: {{ $value }}.
 
         - alert: GolangErrorLog
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=golang-app
               | _msg:~"ERROR"
               | stats count() as errors
@@ -61,7 +61,7 @@ spec:
             app: golang-app
           annotations:
             summary: "ошибка в golang-app"
-            description: "Ошибок в логах golang-app за 5m: {{ $value }}."
+            description: "Ошибок в логах golang-app за 2m: {{ $value }}."
 
     - name: nuxt-app
       type: vlogs
@@ -71,7 +71,7 @@ spec:
       rules:
         - alert: NuxtServerError
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
               | _msg:~"NUXT_ERROR"
               | stats count() as errors
@@ -82,11 +82,11 @@ spec:
             app: nuxt-app
           annotations:
             summary: "500 в nuxt-app"
-            description: "Серверных ошибок (500) в nuxt-app за 5m: {{ $value }}."
+            description: "Серверных ошибок (500) в nuxt-app за 2m: {{ $value }}."
 
         - alert: NuxtUnhandledRejection
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
               | _msg:~"NUXT_UNHANDLED"
               | stats count() as unhandled
@@ -98,11 +98,11 @@ spec:
           annotations:
             summary: "необработанное исключение в nuxt-app"
             description: |
-              Необработанных исключений в nuxt-app за 5m: {{ $value }}.
+              Необработанных исключений в nuxt-app за 2m: {{ $value }}.
 
         - alert: NuxtUnhandledPromiseRejection
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
               | _msg:~"NUXT_REJECTION"
               | stats count() as rejections
@@ -114,11 +114,11 @@ spec:
           annotations:
             summary: "необработанный promise rejection в nuxt-app"
             description: |
-              Необработанных promise rejection в nuxt-app за 5m: {{ $value }}.
+              Необработанных promise rejection в nuxt-app за 2m: {{ $value }}.
 
         - alert: NuxtFatalLog
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
               | _msg:~"NUXT_FATAL"
               | stats count() as fatals
@@ -130,11 +130,11 @@ spec:
           annotations:
             summary: "fatal в nuxt-app"
             description: |
-              Вызов process.exit в nuxt-app. Фаталов за 5m: {{ $value }}.
+              Вызов process.exit в nuxt-app. Фаталов за 2m: {{ $value }}.
 
         - alert: NuxtBadGateway
           expr: |
-            _time: 5m
+            _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
               | _msg:~"NUXT_502"
               | stats count() as badgateways
@@ -145,4 +145,4 @@ spec:
             app: nuxt-app
           annotations:
             summary: "502 в nuxt-app"
-            description: "Ответов 502 в nuxt-app за 5m: {{ $value }}."
+            description: "Ответов 502 в nuxt-app за 2m: {{ $value }}."
