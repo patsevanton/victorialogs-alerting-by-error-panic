@@ -528,81 +528,14 @@ alertmanager:
 - `parse_mode: HTML` — разметка сообщения;
 - `send_resolved: true` — отправлять уведомление и при разрешении алерта.
 
-## Проверка
 
-```bash
-# Компоненты
-kubectl get pods -n vmks | grep -E "vls|vlc|vmalert|alertmanager|vmsingle"
-```
+В Telegram приходят алерты:
 
-Образы приложений собираются из `apps/` и пушатся в GHCR workflow'ом [`.github/workflows/docker.yml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/.github/workflows/docker.yml) (semver-release + `docker/build-push-action`). В манифестах закреплена версия `1.0.1`:
-
-```
-ghcr.io/patsevanton/victorialogs-alerting-by-error-panic/golang-app:1.0.1
-ghcr.io/patsevanton/victorialogs-alerting-by-error-panic/nuxt-app:1.0.1
-```
-
-Для локальной сборки вручную:
-
-```bash
-docker build -t ghcr.io/<you>/victorialogs-alerting-by-error-panic/golang-app:1.0.1 apps/golang-app
-docker build -t ghcr.io/<you>/victorialogs-alerting-by-error-panic/nuxt-app:1.0.1 apps/nuxt-app
-```
-
-Провоцируем падения (Go-образ — distroless, без шелла, поэтому идём через port-forward):
-
-```bash
-kubectl -n apps port-forward svc/golang-app 8080:8080 &
-curl -s -o /dev/null http://localhost:8080/panic   # recover + ERROR в логе
-curl -s -o /dev/null http://localhost:8080/nil     # nil pointer -> pod падает
-curl -s -o /dev/null http://localhost:8080/fatal   # log.Fatal -> pod падает
-kill %1
-
-kubectl -n apps port-forward svc/nuxt-app 3000:3000 &
-curl -s -o /dev/null http://localhost:3000/api/error      # 500
-curl -s -o /dev/null http://localhost:3000/api/throw      # необработанное исключение
-curl -s -o /dev/null http://localhost:3000/api/rejection  # необработанный promise rejection
-curl -s -o /dev/null http://localhost:3000/api/fatal      # process.exit -> pod падает
-curl -s -o /dev/null http://localhost:3000/api/error-502  # 502 без краха
-kill %1
-```
-
-Логи ушли в VictoriaLogs — смотрим через встроенный UI или HTTP API:
-
-```bash
-kubectl -n vmks port-forward svc/vls-server 9428:9428
-# UI: http://localhost:9428/select/vmui
-# или HTTP API (count по "panic:")
-curl -s 'http://localhost:9428/select/logsql/stats_query' \
-  --data-urlencode 'query=kubernetes.pod_labels.app:=golang-app | _msg:~"panic:" | stats count()'
-```
-
-Проверка состояния алертов в `vmalert-logs`:
-
-```bash
-kubectl -n vmks port-forward svc/vmalert-vmalert-logs 8080:8080
-# UI:  http://localhost:8080/vmalert — увидим GolangPanicDetected в состоянии FIRING
-# API: http://localhost:8080/api/v1/alerts
-```
-
-> Имя сервиса отдельного `vmalert-logs` чарт оператора строит как `vmalert-vmalert-logs`. Уточнить можно командой:
->
-> ```bash
-> kubectl get svc -n vmks | grep vmalert
-> ```
-
-Через `1m` + `for: 1m` в Telegram приходит сообщение вида:
-
-```
-FIRING GolangPanicDetected
-app: golang-app
-panic в golang-app
-Паник у пода golang-app-7d9c6b4f5-x2k9p за 2m: 3.
-```
+![Алерты в telegram](alerts_in_telegram.png)
 
 ## Заключение
 
-Мы получили алертинг, который срабатывает на сам факт появления ошибки в логах — `panic`, `log.Fatal`, 500-я или необработанное исключение — и шлёт его в Telegram без промежуточных сервисов. Правила живут в одном CRD `VMRule`, datasource — VictoriaLogs, а LogsQL-правила исполняет отдельный `vmalert-logs`.
+Мы получили алертинг, который срабатывает на сам факт появления ошибки в логах — `panic`, `log.Fatal`, 500-я или необработанное исключение — и шлёт его в Telegram. Правила живут в одном CRD `VMRule`, datasource — VictoriaLogs, а LogsQL-правила исполняет отдельный `vmalert-logs`.
 
 Это та же связка, которую команды используют для метрик, но применённая к логам: `vmalert` исполняет LogsQL вместо PromQL, а Alertmanager остаётся общим — так метрики и логи сводятся в один поток уведомлений.
 
