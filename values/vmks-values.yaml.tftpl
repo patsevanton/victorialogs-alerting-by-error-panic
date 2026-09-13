@@ -40,8 +40,11 @@ defaultDatasources:
       uid: VictoriaLogs
       type: victoriametrics-logs-datasource
       url: ${vls_server_url}
-      # Управление алертами для этого datasource через Grafana UI выключено.
-      # Алерты по логам создаются только через VMRule и исполняются vmalert-logs.
+      # manageAlerts: false снимает переключатель datasource-managed правил
+      # («Manage alert rules in Alerting UI»), но НЕ запрещает Grafana-managed
+      # алерты: их Grafana разрешает создавать всегда. Полностью отключить
+      # алерты по логам через UI на уровне datasource нельзя, поэтому source
+      # of truth — только VMRule, исполняется vmalert-logs.
       jsonData:
         manageAlerts: false
 
