@@ -9,6 +9,8 @@ spec:
   groups:
     - name: golang-app
       type: vlogs
+      # Как часто выполняется LogsQL-запрос этой группы: раз в минуту.
+      # Переопределяет evaluationInterval из VMAlert.
       interval: 1m
       rules:
         - alert: GolangPanicDetected
@@ -63,6 +65,8 @@ spec:
 
     - name: nuxt-app
       type: vlogs
+      # Как часто выполняется LogsQL-запрос этой группы: раз в минуту.
+      # Переопределяет evaluationInterval из VMAlert.
       interval: 1m
       rules:
         - alert: NuxtServerError

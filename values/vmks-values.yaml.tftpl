@@ -78,6 +78,7 @@ vmalert:
           operator: NotIn
           values:
             - logs-to-metrics
+    # Как часто встроенный vmalert исполняет группы PromQL-правил: раз в минуту.
     evaluationInterval: 1m
 
 alertmanager:

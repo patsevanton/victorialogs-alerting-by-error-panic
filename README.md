@@ -101,6 +101,7 @@ vmalert:
           operator: NotIn
           values:
             - logs-to-metrics
+    # Как часто встроенный vmalert исполняет группы PromQL-правил: раз в минуту.
     evaluationInterval: 1m
 ```
 
@@ -354,6 +355,8 @@ spec:
   groups:
     - name: golang-app
       type: vlogs
+      # Как часто выполняется LogsQL-запрос этой группы: раз в минуту.
+      # Переопределяет evaluationInterval из VMAlert.
       interval: 1m
       rules:
         - alert: GolangPanicDetected
@@ -400,6 +403,8 @@ spec:
 
     - name: nuxt-app
       type: vlogs
+      # Как часто выполняется LogsQL-запрос этой группы: раз в минуту.
+      # Переопределяет evaluationInterval из VMAlert.
       interval: 1m
       rules:
         - alert: NuxtServerError
