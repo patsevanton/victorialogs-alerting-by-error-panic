@@ -16,22 +16,7 @@
 - Правила живут в коде, а не в Grafana UI. Далее будет написано почему;
 - **Alertmanager шлёт алерты напрямую в Telegram** через нативный `telegram_configs`, без промежуточного bridge;
 
-```mermaid
-flowchart TD
-    Go["golang-app<br/>(panic, fatal, error)"] -->|stdout + stderr| Vlagent["vlagent (DaemonSet)"]
-    Nuxt["nuxt-app<br/>(500, unhandled)"] -->|stderr| Vlagent
-    Vlagent -->|insert/native| VL[("VictoriaLogs<br/>vls-server:9428")]
-
-    VL -->|LogsQL| VMA["vmalert-logs (VMAlert)<br/>rules: VMRule vmalert-rules"]
-    VMA -->|ALERTS state| VMSingle[("vmsingle (VictoriaMetrics)<br/>8428")]
-    VMA -->|notify| AM["Alertmanager"]
-    AM -->|telegram_configs| TG["Telegram"]
-
-    Grafana["Grafana<br/>(manageAlerts: false для VictoriaLogs)"] -->|datasource| VL
-
-    VL -->|/metrics| VMAgent["vmagent"]
-    VMAgent -->|remoteWrite| VMSingle
-```
+[Архитектура](архитектура.png)
 
 Поток данных:
 
