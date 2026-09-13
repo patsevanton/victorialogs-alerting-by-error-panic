@@ -89,21 +89,24 @@ helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-m
 Ключевые части values для victoria-metrics-k8s-stack:
 
 ```yaml
-# Встроенный vmalert исполняет только штатные PromQL-правила vmks.
+# Встроенный vmalert исполняет PromQL-правила против vmsingle.
 # LogsQL-правила исполняет отдельный VMAlert (manifests/vmalert-logs.yaml).
 vmalert:
   enabled: true
   spec:
     selectAllByDefault: false
     ruleSelector:
-      matchLabels:
-        app.kubernetes.io/managed-by: sync-job
+      matchExpressions:
+        - key: type
+          operator: NotIn
+          values:
+            - logs-to-metrics
     evaluationInterval: 1m
 ```
 
 Здесь важно:
 
-- Встроенный `vmalert` намеренно ограничен `ruleSelector` по лейблу `app.kubernetes.io/managed-by: sync-job` — он исполняет только дефолтные PromQL-правила стека против `vmsingle`. LogsQL-правила из `VMRule` он не трогает.
+- Встроенный `vmalert` берёт все `VMRule`, кроме LogsQL-правил — для этого `ruleSelector` отфильтровывает по `type: logs-to-metrics` через «обратный» `matchExpressions` (`NotIn`). В итоге он исполняет и дефолтные PromQL-правила стека, и кастомный PromQL-`VMRule`, созданный вручную без специальных лейблов. LogsQL-правила он не трогает.
 - `vmsingle` включён (дефолт чарта) — сюда `vmalert-logs` пишет `ALERTS`/`ALERTS_FOR_STATE` через `remoteWrite`/`remoteRead`. В него же `vmagent` пишет скрейпнутые метрики, в том числе метрики VictoriaLogs. Блок `vmsingle` в values отсутствует — используется целиком дефолт чарта (`enabled`, `storage 20Gi`, `retentionPeriod "1"`).
 - `alertmanager` включён (дефолт чарта) и настраивается в отдельном блоке `alertmanager.*` с нативным `telegram_configs` — подробнее в Шаге 6.
 

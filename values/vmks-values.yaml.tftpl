@@ -63,18 +63,21 @@ defaultRules:
     kube-scheduler.rules:
       enabled: false
 
-# vmalert (встроенный) исполняет только дефолтные PromQL-правила vmks против
-# vmsingle (datasource чарт подставляет сам из vmsingle). Дефолтные правила
-# создаёт sync-job и помечает лейблом app.kubernetes.io/managed-by: sync-job —
-# по нему встроенный vmalert их и выбирает. Наши LogsQL-правила исполняет
-# отдельный VMAlert (manifests/vmalert-logs.yaml).
+# vmalert (встроенный) исполняет PromQL-правила против vmsingle
+# (datasource чарт подставляет сам из vmsingle). Он берёт все VMRule в
+# namespace vmalert'а, кроме LogsQL-правил (label type: logs-to-metrics) —
+# их исполняет отдельный VMAlert (manifests/vmalert-logs.yaml). Так кастомный
+# PromQL-VMRule, созданный вручную без специальных лейблов, подхватывается сам.
 vmalert:
   enabled: true
   spec:
     selectAllByDefault: false
     ruleSelector:
-      matchLabels:
-        app.kubernetes.io/managed-by: sync-job
+      matchExpressions:
+        - key: type
+          operator: NotIn
+          values:
+            - logs-to-metrics
     evaluationInterval: 1m
 
 alertmanager:
