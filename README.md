@@ -105,46 +105,11 @@ vmalert:
     evaluationInterval: 1m
 ```
 
-Отдельный `VMAlert` `vmalert-logs` объявлен манифестом [`manifests/vmalert-logs.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-logs.yaml):
-
-```yaml
-apiVersion: operator.victoriametrics.com/v1beta1
-kind: VMAlert
-metadata:
-  name: vmalert-logs
-  namespace: vmks
-spec:
-  datasource:
-    url: http://vls-server.vmks.svc.cluster.local:9428
-  evaluationInterval: 1m
-  selectAllByDefault: false
-  ruleSelector:
-    matchLabels:
-      type: logs-to-metrics
-  remoteWrite:
-    url: http://vmsingle-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:8428
-  remoteRead:
-    url: http://vmsingle-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:8428
-  notifiers:
-    - url: http://vmalertmanager-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:9093
-```
-
-- `vmalert-logs` берёт LogsQL-выражения из `VMRule` и выполняет их в VictoriaLogs по адресу `datasource.url`.
-- `ruleSelector: type: logs-to-metrics` — выполняет только `VMRule` с этим лейблом.
-- `remoteWrite`/`remoteRead` — `vmalert-logs` пишет состояние алертов в `vmsingle` и восстанавливает его оттуда при рестарте.
-
 Здесь важно:
 
 - Встроенный `vmalert` берёт все `VMRule`, кроме LogsQL-правил — для этого `ruleSelector` отфильтровывает по `type: logs-to-metrics` через «обратный» `matchExpressions` (`NotIn`). В итоге он исполняет и дефолтные PromQL-правила стека, и кастомный PromQL-`VMRule`, созданный вручную без специальных лейблов. LogsQL-правила он не трогает.
 - `vmsingle` включён (дефолт чарта) — сюда `vmalert-logs` пишет `ALERTS`/`ALERTS_FOR_STATE` через `remoteWrite`/`remoteRead`. В него же `vmagent` пишет скрейпнутые метрики, в том числе метрики VictoriaLogs.
 - `alertmanager` включён (дефолт чарта) и настраивается в отдельном блоке `alertmanager.*` с нативным `telegram_configs` — подробнее в Шаге 6.
-
-Применяем `vmalert-logs` и правила `VMRule` после того, как vmks поднят и оператор с CRD `VMAlert`/`VMRule` доступны:
-
-```bash
-kubectl apply -f manifests/vmalert-logs.yaml
-kubectl apply -f manifests/vmalert-rules.yaml
-```
 
 ### Выключаем алерты по логам через Grafana UI
 
@@ -175,7 +140,7 @@ defaultDatasources:
 
 ## Шаг 2. VictoriaLogs
 
-Ставим single-node VictoriaLogs отдельным чартом в namespace `vmks`. К этому моменту vmks уже поднят, поэтому при установке VictoriaLogs его собственные метрики (`/metrics`) скрейпятся `vmagent`'ом из vmks через `vmServiceScrape` и уйдут в `vmsingle`. Values генерируются Terraform'ом из [`values/vls-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vls-values.yaml.tftpl) в файл `values/vls-values.yaml`:
+Ставим single-node VictoriaLogs отдельным чартом в namespace `vmks`. К этому моменту vmks уже поднят, поэтому при установке VictoriaLogs его собственные метрики (`/metrics`) скрейпятся `vmagent`'ом из vmks через `vmServiceScrape` и уйдут в `vmsingle`.
 
 ```bash
 helm repo add vm https://victoriametrics.github.io/helm-charts/
@@ -208,7 +173,7 @@ server:
 
 ## Шаг 3. vlagent
 
-Собираем логи всех подов через DaemonSet `vlagent`. Values генерируются Terraform'ом из [`values/vlc-values.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/values/vlc-values.yaml.tftpl) в файл `values/vlc-values.yaml`:
+Собираем логи всех подов через DaemonSet `vlagent`:
 
 ```bash
 helm upgrade --install vlc vm/victoria-logs-collector \
@@ -230,6 +195,47 @@ collector:
 ```
 
 `includePodLabels` (по умолчанию `true`) — критично для алертов: каждый лог получает поля `kubernetes.pod_labels.app`, по которым правила отличают `golang-app` от `nuxt-app`. `_stream`-полями по умолчанию становятся `kubernetes.container_name`, `kubernetes.pod_name`, `kubernetes.pod_namespace` — это даёт быструю фильтрацию и группировку в LogsQL.
+
+### vmalert-logs и правила VMRule
+
+К этому моменту datasource уже существует: vmks поднят (Шаг 1) — значит, CRD `VMAlert`/`VMRule` и оператор доступны; VictoriaLogs слушает `vls-server:9428` (Шаг 2). Осталось поднять отдельный `VMAlert` `vmalert-logs` под LogsQL-правила и применить сами правила.
+
+Отдельный `VMAlert` `vmalert-logs` объявлен манифестом [`manifests/vmalert-logs.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-logs.yaml):
+
+```yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMAlert
+metadata:
+  name: vmalert-logs
+  namespace: vmks
+spec:
+  datasource:
+    url: http://vls-server.vmks.svc.cluster.local:9428
+  evaluationInterval: 1m
+  selectAllByDefault: false
+  ruleSelector:
+    matchLabels:
+      type: logs-to-metrics
+  remoteWrite:
+    url: http://vmsingle-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:8428
+  remoteRead:
+    url: http://vmsingle-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:8428
+  notifiers:
+    - url: http://vmalertmanager-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:9093
+```
+
+- `vmalert-logs` берёт LogsQL-выражения из `VMRule` и выполняет их в VictoriaLogs по адресу `datasource.url`;
+- `ruleSelector: type: logs-to-metrics` — выполняет только `VMRule` с этим лейблом;
+- `remoteWrite`/`remoteRead` — `vmalert-logs` пишет состояние алертов в `vmsingle` и восстанавливает его оттуда при рестарте.
+
+Применяем `vmalert-logs` и правила `VMRule` (сами правила разбираются в Шаге 5):
+
+```bash
+kubectl apply -f manifests/vmalert-logs.yaml
+kubectl apply -f manifests/vmalert-rules.yaml
+```
+
+Порядок здесь строгий: vmks создаёт CRD и оператор, VictoriaLogs — datasource, и только после этого применяются `vmalert-logs`/`VMRule`. Приложения (Шаг 4) поднимаются уже при готовом алертинге, поэтому в момент появления первых логов правила уже исполняются.
 
 ## Шаг 4. Приложения, которые падают
 
@@ -329,7 +335,7 @@ kubectl apply -f manifests/nuxt-app.yaml
 
 ## Шаг 5. Правила алертов в VMRule
 
-Правила — это CRD `VMRule` ([`manifests/vmalert-rules.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules.yaml)), который исполняет отдельный `VMAlert` `vmalert-logs`. У `VMRule` стоит лейбл `type: logs-to-metrics` — по нему `vmalert-logs` и выбирает эти правила (`ruleSelector`).
+Правила — это CRD `VMRule` ([`manifests/vmalert-rules.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules.yaml)), который исполняет отдельный `VMAlert` `vmalert-logs`. У `VMRule` стоит лейбл `type: logs-to-metrics` — по нему `vmalert-logs` и выбирает эти правила (`ruleSelector`). Сам `vmalert-logs` и этот `VMRule` уже применены в конце Шага 3; ниже — разбор содержимого правил.
 
 ```yaml
 apiVersion: operator.victoriametrics.com/v1beta1
@@ -484,10 +490,10 @@ spec:
 
 ## Шаг 6. Alertmanager → Telegram напрямую
 
-Prometheus Alertmanager умеет нативный `telegram_configs`, поэтому bridge не нужен. Токен кладём в Secret — манифест рендерится Terraform'ом из шаблона [`manifests/telegram-bot-token-secret.yaml.tftpl`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/telegram-bot-token-secret.yaml.tftpl), а в конфиг передаём путь к нему через `bot_token_file` — токен не светится в конфиге.
+Prometheus Alertmanager умеет нативный `telegram_configs`, поэтому bridge не нужен. Токен кладём в Secret, а в конфиг передаём путь к нему через `bot_token_file` — токен не светится в конфиге.
 
 ```yaml
-# manifests/telegram-bot-token-secret.yaml.tftpl (рендерится в telegram-bot-token-secret.yaml)
+# telegram-bot-token-secret.yaml
 apiVersion: v1
 kind: Secret
 metadata:

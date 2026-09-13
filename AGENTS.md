@@ -42,5 +42,5 @@ kubectl apply -f telegram-bot-token-secret.yaml
 kubectl apply -f manifests/mihomo-proxy.yaml
 ```
 
-Далее — шаги 1–6 из README. После `helm install vmks` (Шаг 1) применяем `manifests/vmalert-logs.yaml` и `manifests/vmalert-rules.yaml` — CRD `VMAlert`/`VMRule` к этому моменту уже развёрнуты оператором.
+Далее — шаги 1–6 из README. Порядок строгий: Шаг 1 (vmks) создаёт CRD `VMAlert`/`VMRule` и оператор, Шаг 2 (VictoriaLogs) — datasource, и только в конце Шага 3 применяем `manifests/vmalert-logs.yaml` и `manifests/vmalert-rules.yaml`. Приложения (Шаг 4) поднимаются уже при готовом алертинге.
 
