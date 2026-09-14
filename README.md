@@ -455,12 +455,26 @@ _time: 1h при interval: 1m — широкое окно перечитывае
 
 ```mermaid
 flowchart TB
-    subgraph A["Запуск 1 — окно 1h"]
-        subgraph B["Запуск 2 — окно 1h"]
-            subgraph C["Запуск 3 — окно 1h"]
-            end
-        end
+    classDef hide fill:transparent,stroke:none,color:transparent
+
+    subgraph R1[" "]
+      direction LR
+      A[/Запуск 1 — окно 1h/]
     end
+    subgraph R2[" "]
+      direction LR
+      s2["　　"]:::hide
+      B[/Запуск 2 — окно 1h/]
+    end
+    subgraph R3[" "]
+      direction LR
+      s3["　　　　"]:::hide
+      C[/Запуск 3 — окно 1h/]
+    end
+
+    style R1 fill:none,stroke:none
+    style R2 fill:none,stroke:none
+    style R3 fill:none,stroke:none
 ```
 
 _time: 2m — окно минимально, повторяется только 1 минута из 2:
@@ -473,12 +487,26 @@ _time: 2m — окно минимально, повторяется только
 
 ```mermaid
 flowchart TB
-    subgraph A["Запуск 1 — окно 2m"]
-        subgraph B["Запуск 2 — окно 2m"]
-            subgraph C["Запуск 3 — окно 2m"]
-            end
-        end
+    classDef hide fill:transparent,stroke:none,color:transparent
+
+    subgraph R1[" "]
+      direction LR
+      A[/Запуск 1 — окно 2m/]
     end
+    subgraph R2[" "]
+      direction LR
+      s2["　　"]:::hide
+      B[/Запуск 2 — окно 2m/]
+    end
+    subgraph R3[" "]
+      direction LR
+      s3["　　　　"]:::hide
+      C[/Запуск 3 — окно 2m/]
+    end
+
+    style R1 fill:none,stroke:none
+    style R2 fill:none,stroke:none
+    style R3 fill:none,stroke:none
 ```
 
 Каждый следующий запуск сдвигает окно на 1 минуту и заново сканирует почти всё то же самое: с `_time: 1h` за 10 минут правило перечитает час логов десять раз, хотя нового материала в них всего 10 минут. С `_time: 2m` сканируются 2 минуты вместо 60 — а результат тот же: алерт срабатывает на событие и держится `for: 1m`.
