@@ -1,5 +1,7 @@
 # Алерты по ошибкам и panic из логов приложений: VictoriaLogs + vmalert + Alertmanager → Telegram
 
+ждем https://github.com/VictoriaMetrics/VictoriaLogs/issues/1790
+
 ## Введение
 
 Классическая ситуация: Go-сервис падает с `panic: runtime error: invalid memory address or nil pointer dereference`, Nuxt-фронтенд логирует `NUXT_UNHANDLED: unhandled rejection`. Клиент видит лишь общее «что-то сломалось» — точный текст ошибки остаётся только в логах.
