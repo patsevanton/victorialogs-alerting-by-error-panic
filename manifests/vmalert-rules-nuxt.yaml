@@ -17,6 +17,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
               | _msg:~"NUXT_ERROR"
               | stats count() as errors
               | filter errors:>0
@@ -32,6 +33,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
               | _msg:~"NUXT_UNHANDLED"
               | stats count() as unhandled
               | filter unhandled:>0
@@ -48,6 +50,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
               | _msg:~"NUXT_REJECTION"
               | stats count() as rejections
               | filter rejections:>0
@@ -64,6 +67,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
               | _msg:~"NUXT_FATAL"
               | stats count() as fatals
               | filter fatals:>0
@@ -80,6 +84,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
               | _msg:~"NUXT_502"
               | stats count() as badgateways
               | filter badgateways:>0

@@ -16,9 +16,12 @@ spec:
         - alert: GolangPanicDetected
           # "panic:" есть и у явного panic("..."), и у runtime-паник
           # (nil pointer dereference, index out of range) — ловим все разом.
+          # stream:=stderr отсекает обычные stdout-логи ещё до дорогой
+          # регулярки: ошибки по контракту всегда пишутся в stderr.
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=golang-app
+              | stream:=stderr
               | _msg:~"panic:"
               | stats by (kubernetes.pod_name) count() as panics
               | filter panics:>0
@@ -36,6 +39,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=golang-app
+              | stream:=stderr
               | _msg:~"FATAL"
               | stats count() as fatals
               | filter fatals:>0
@@ -52,6 +56,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=golang-app
+              | stream:=stderr
               | _msg:~"ERROR"
               | stats count() as errors
               | filter errors:>0

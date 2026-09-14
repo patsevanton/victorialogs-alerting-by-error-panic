@@ -11,16 +11,22 @@ var (
 	// их собирает vlagent как штатный поток логов приложения.
 	infoLog = log.New(os.Stdout, "", log.LstdFlags)
 
-	// errLog пишет panic / fatal / error в stderr. Разделение потоков нужно,
-	// чтобы vlagent и далее vmalert могли надёжно отличать ошибки от
-	// обычных логов по stream (stderr vs stdout), а не только по тексту.
+	// errLog пишет panic / fatal / error в stderr. Это не косметика, а
+	// обязательное соглашение: Kubernetes-рантайм пишет stdout и stderr в
+	// отдельные .log-файлы, а vlagent размечает каждую строку полем
+	// stream=stdout|stderr. Благодаря этому в правилах VMRule ошибки можно
+	// выбрать дешёвым фильтром stream:=stderr и только потом матчить текст
+	// регуляркой (_msg:~"panic:"), не гоняя regex по всему потоку stdout.
+	// Если писать ошибки в stdout, придётся ловить их исключительно по
+	// тексту — это самый дорогой сценарий для VictoriaLogs.
 	errLog = log.New(os.Stderr, "", log.LstdFlags)
 )
 
 // Приложение с набором эндпоинтов, каждый из которых воспроизводит
 // реальный класс ошибок в проде. Обычные логи уходят в stdout,
-// ошибки (panic / fatal / error) — в stderr. vlagent собирает оба
-// потока и отправляет их в VictoriaLogs.
+// ошибки (panic / fatal / error) — обязательно в stderr. vlagent собирает
+// оба потока и отправляет их в VictoriaLogs, где строки размечены полем
+// stream=stdout|stderr.
 func main() {
 	mux := http.NewServeMux()
 

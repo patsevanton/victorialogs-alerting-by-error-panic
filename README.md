@@ -283,6 +283,37 @@ kubectl apply -f manifests/golang-app.yaml
 kubectl apply -f manifests/nuxt-app.yaml
 ```
 
+### Почему ошибки обязательно в stderr, а не в stdout
+
+Правило в обоих приложениях жёсткое и единообразное: **обычные логи — в stdout, а panic, fatal, error, 500/502 и необработанные исключения — только в stderr.** Это не вопрос стиля, а часть контракта с пайплайном алертинга. Пара причин.
+
+**Как Kubernetes и vlagent помечают поток.** Kubernetes-рантайм пишет stdout и stderr контейнера в два отдельных файла (`*.log`), а vlagent при чтении размечает каждую строку log-полем `stream=stdout` или `stream=stderr` (это видно и в `_stream`, например `stream="stdout"`). Дальше VictoriaLogs хранит `stream` как обычное поле — по нему можно фильтровать. Если ошибки пишутся в stdout, этого сигнала нет: остаётся гадать об ошибке только по тексту сообщения.
+
+**Почему это важно для цены алерта.** В LogsQL ошибки по тексту — самая дорогая операция. Фильтр по полю (`stream:=stderr`) и по лейблу (`kubernetes.pod_labels.app:=...`) — это отбор по уже проиндексированным/агрегированным значениям, он дёшев. А регулярка по сообщению (`_msg:~"panic:"`) обязана прочитать и проматчить тело каждой строки. Поэтому порядок такой: сначала отсеять по app и stream, и только потом гнать регулярку по оставшемуся (обычно крошечному) множеству строк. Без `stream:=stderr` регулярка применялась бы ко всему stdout-потоку приложения — на каждый запуск правила VictoriaLogs дергал бы и разбирал раздутые журналы info/debug.
+
+Одна строка `stream:=stderr` сокращает объём данных, который VictoriaLogs сканирует под регуляркой на исполнение правила, в разы — на приложениях, где основная масса логов штатные (stdout), это может быть десятки и сотни крат.
+
+### Примерная разница в нагрузке на VictoriaLogs
+
+Точные числа зависят от объёма логов приложения, но соотношение оценить можно. Пусть у приложения за минуту появляется:
+
+- **stdout** (info/debug/access): 10 000 строк;
+- **stderr** (ошибки, panic, warnings): 100 строк.
+
+Тогда для одного правила с `_time: 2m`:
+
+| Порядок фильтров в правиле | Сколько строк читает VictoriaLogs под регулярку за исполнение |
+| --- | --- |
+| только `_msg:~"..."` (по всему потоку) | ~20 200 (весь stdout + stderr за 2m) |
+| `app:=...` потом `_msg:~"..."` | ~20 200 (app не разделяет поток сообщения, читаем всё равно весь) |
+| `app:=...` → `stream:=stderr` → `_msg:~"..."` | 200 (2 минуты только stderr) |
+
+То есть `stream:=stderr` убирает ~99% строк ещё до самой дорогой стадии. А поскольку правило исполняется каждый `interval` (у нас раз в 1m) и сканирует окно `_time` заново (см. раздел про `_time`), выигрыш копится на каждом цикле: без `stream` за час под регулярку ушло бы ~1,2 млн строк, а с ним — ~12 тысяч.
+
+Важна и сама стоимость операций: отбор по полям и по `_stream` VictoriaLogs делает по индексам/блокам стримов и почти бесплатно, а регулярка — это CPU на распаковку и сравнение текста. Узкий фильтр до регулярки — главный рычаг, удерживающий алертинг по логам дешёвым. Это же работает и в другой последовательности: сначала `stream`, потом `_msg`, а `stats` — в самом конце, когда агрегировать уже почти нечего.
+
+Этим же объясняется рекомендация в Шаге 5 ставить `stream:=stderr` перед `_msg:~"..."`: чем раньше отсеян поток, тем меньше достаётся регулярке.
+
 ## Шаг 5. Правила алертов в VMRule
 
 Правила — это CRD `VMRule`, разбитый на два манифеста по приложениям ([`manifests/vmalert-rules-golang.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-golang.yaml) и [`manifests/vmalert-rules-nuxt.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-nuxt.yaml)), которые исполняет `vmalert-logs` (Шаг 3). Разбиение по файлу на приложение упрощает ревью и CODEOWNERS: правки правил golang-app не пересекаются с правками nuxt-app. Оба `VMRule` уже применены в конце Шага 3; ниже — разбор содержимого.
@@ -307,6 +338,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=golang-app
+              | stream:=stderr
               | _msg:~"panic:"
               | stats by (kubernetes.pod_name) count() as panics
               | filter panics:>0
@@ -323,6 +355,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=golang-app
+              | stream:=stderr
               | _msg:~"FATAL"
               | stats count() as fatals
               | filter fatals:>0
@@ -336,6 +369,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=golang-app
+              | stream:=stderr
               | _msg:~"ERROR"
               | stats count() as errors
               | filter errors:>0
@@ -366,6 +400,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
               | _msg:~"NUXT_ERROR"
               | stats count() as errors
               | filter errors:>0
@@ -376,6 +411,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
               | _msg:~"NUXT_UNHANDLED"
               | stats count() as unhandled
               | filter unhandled:>0
@@ -386,6 +422,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
               | _msg:~"NUXT_REJECTION"
               | stats count() as rejections
               | filter rejections:>0
@@ -396,6 +433,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
               | _msg:~"NUXT_FATAL"
               | stats count() as fatals
               | filter fatals:>0
@@ -406,6 +444,7 @@ spec:
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
               | _msg:~"NUXT_502"
               | stats count() as badgateways
               | filter badgateways:>0
@@ -417,9 +456,12 @@ spec:
 
 - `_time: 2m` — окно выборки: правила считают события за последние 2 минуты;
 - `kubernetes.pod_labels.app:=golang-app` — фильтр по лейблу пода (добавил `vlagent`);
+- `stream:=stderr` — фильтр по стандартному потоку: оставляем только stderr, куда приложение обязано писать ошибки;
 - `_msg:~"panic:"` — регулярка по тексту сообщения;
 - `stats by (kubernetes.pod_name) count() as panics` — агрегация числа совпадений по поду;
 - `filter panics:>0` — оставляем только группы, где сработало.
+
+Порядок фильтров не случаен: сначала дёшево отсеиваем по лейблу пода и по `stream`, и только потом на оставшемся (уже маленьком) множестве строк выполняем самую дорогую операцию — регулярку `_msg:~"..."`. Регулярка по всему тексту каждого сообщения — главный потребитель CPU в лог-запросе, поэтому до неё нужно пропускать как можно меньше строк.
 
 Почему `type: vlogs` и `interval` на уровне группы: по умолчанию `vmalert` считает правила `prometheus`-типа и валидирует выражения как PromQL. `type: vlogs` говорит ему, что выражения написаны на LogsQL. Time-фильтр в выражениях задан явно (`_time: 2m`) — именно это окно сканирует VictoriaLogs на каждом исполнении.
 
