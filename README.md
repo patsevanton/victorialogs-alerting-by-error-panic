@@ -2,16 +2,16 @@
 
 ## Введение
 
-Классическая ситуация: Go-сервис падает с `panic: runtime error: invalid memory address or nil pointer dereference`, Nuxt-фронтенд логирует `NUXT_UNHANDLED: unhandled rejection`. Сама ошибка при этом больше нигде не живёт — ни в интерфейсе, ни в базе. Клиент видит лишь общее «что-то сломалось», а точный текст ошибки остаётся только в логах. Значит, и узнать о проблеме вовремя можно только из логов.
+Классическая ситуация: Go-сервис падает с `panic: runtime error: invalid memory address or nil pointer dereference`, Nuxt-фронтенд логирует `NUXT_UNHANDLED: unhandled rejection`. Клиент видит лишь общее «что-то сломалось» — точный текст ошибки остаётся только в логах.
 
-Решение — алертинг по логам. Связка **VictoriaLogs + vlagent + vmalert + Alertmanager** следит за потоком логов, и как только приложение роняет `panic`, `log.Fatal` или `NUXT_UNHANDLED`, — в Telegram уходит алерт. Эта статья — пошаговый разбор того, как поднять такую связку в Kubernetes и не заплатить за это чрезмерной ценой.
+Решение — алертинг по логам. Связка **VictoriaLogs + vlagent + vmalert + Alertmanager** следит за потоком, и как только приложение пишет `panic`, `log.Fatal` или `NUXT_UNHANDLED`, в Telegram уходит алерт. Ниже — как поднять эту связку в Kubernetes без лишней нагрузки на хранилище.
 
 ## Архитектура
 
-Ключевые решения, которые мы разберём:
+Ключевые решения:
 
 - **Логи — не временные ряды,** поэтому у них отдельное хранилище (VictoriaLogs), а не `vmsingle` (Шаг 2);
-- **LogsQL- и PromQL-правила исполняет разный `vmalert`:** встроенный `vmalert` из vmks остаётся на PromQL, а логи ведёт второй `vmalert` (`vmalert-logs`) с VictoriaLogs как datasource (Шаги 1 и 3);
+- **LogsQL- и PromQL-правила исполняет разный `vmalert`:** встроенный из vmks остаётся на PromQL, логи ведёт `vmalert-logs` с VictoriaLogs как datasource (Шаги 1 и 3);
 - **Правила живут в коде, а не в Grafana UI** — почему, разберём в Шаге 1;
 - **Alertmanager шлёт алерты в Telegram** нативным `telegram_configs` (Шаг 6).
 
@@ -19,22 +19,22 @@
 
 Поток данных:
 
-1. Поднимаем `victoria-metrics-k8s-stack` (vmks): он даёт `vmagent`, `vmsingle`, `Alertmanager`, Grafana и CRD оператора (состав — в таблице ниже).
+1. Поднимаем `victoria-metrics-k8s-stack` (vmks): `vmagent`, `vmsingle`, `Alertmanager`, Grafana и CRD оператора (состав — в таблице ниже).
 2. Приложения пишут логи в `stdout`/`stderr`.
-3. `vlagent` с каждой ноды собирает логи контейнеров и реплицирует их в VictoriaLogs (`/insert/native`).
+3. `vlagent` с каждой ноды собирает логи контейнеров и отправляет их в VictoriaLogs (`/insert/native`).
 4. `vmalert-logs` раз в `1m` исполняет LogsQL-запросы из `VMRule` против VictoriaLogs (`/select/logsql/stats_query`).
 5. Сработавшее правило уходит в Alertmanager.
-6. Alertmanager через `telegram_configs` отправляет сообщение напрямую в Telegram-бота.
+6. Alertmanager через `telegram_configs` отправляет сообщение в Telegram-бота.
 
 ## Предварительные требования
 
-Предполагается, что у вас уже есть рабочая среда:
+Нужны:
 
 - **Kubernetes-кластер**;
-- **Ingress-контроллер** чтобы зайти в Grafana;
-- **Инструменты** — `kubectl`, `helm`.
+- **Ingress-контроллер**, чтобы зайти в Grafana;
+- **`kubectl` и `helm`**.
 
-Дальше в статье разворачиваются такие компоненты (все, кроме приложений, — в namespace `vmks`):
+Компоненты (все, кроме приложений, — в namespace `vmks`):
 
 | Компонент | Чарт / манифест | Роль |
 | --- | --- | --- |
@@ -56,7 +56,7 @@ helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-m
   --wait --values values/vmks-values.yaml
 ```
 
-Ключевые части values для `victoria-metrics-k8s-stack`. Здесь настраивается встроенный `vmalert` — тот, что остаётся на PromQL; LogsQL-правила он не должен трогать, поэтому исключаем их лейбл `type: logs-to-metrics`:
+Встроенный `vmalert` остаётся на PromQL. LogsQL-правила он не должен трогать — исключаем лейбл `type: logs-to-metrics`:
 
 ```yaml
 # LogsQL-правила исполняет отдельный VMAlert (manifests/vmalert-logs.yaml).
@@ -74,22 +74,19 @@ vmalert:
     evaluationInterval: 1m
 ```
 
-Здесь важно:
-
-- Встроенный `vmalert` берёт все `VMRule`, кроме LogsQL-правил — для этого `ruleSelector` отфильтровывает по `type: logs-to-metrics` через «обратный» `matchExpressions` (`NotIn`). В итоге он исполняет и дефолтные PromQL-правила стека, и кастомные PromQL-`VMRule`, созданные вручную без специальных лейблов. LogsQL-правила он не трогает.
-- `vmsingle` и `alertmanager` включены (дефолт чарта): второй `vmalert-logs` пишет состояние алертов в `vmsingle`, а уведомления уходят через `alertmanager` (Шаги 3 и 6).
+`ruleSelector` с `NotIn` оставляет дефолтные PromQL-правила стека и кастомные PromQL-`VMRule` без специальных лейблов. `vmsingle` и `alertmanager` включены по дефолту чарта: `vmalert-logs` пишет состояние алертов в `vmsingle`, уведомления уходят через `alertmanager` (Шаги 3 и 6).
 
 ### Почему алерты по логам не делаем через Grafana UI
 
-Для логов алерт через UI слишком дорого. Он создаётся в пару кликов: набрал запрос в Explore, нажал «Create alert», не задумываясь о том, как часто правило исполняется, на каком окне и сколько строк сканирует. Для метрик это почти бесплатно — в PromQL запрос считается по уже агрегированным временным рядам. Для логов — нет: каждое правило на LogsQL это полноценный запрос к VictoriaLogs с `stats`-агрегацией, фильтрами по лейблам и регулярками по тексту, и исполняется он каждую минуту (`evaluationInterval: 1m`).
+Для метрик алерт из Explore почти бесплатен: PromQL считается по уже агрегированным рядам. Для логов каждое правило — полноценный запрос к VictoriaLogs со `stats`, фильтрами и регулярками, и он исполняется каждую минуту (`evaluationInterval: 1m`).
 
-Когда алерты вешает вся команда напрямую из UI, их быстро становится много, и среди них неизбежно появляются неоптимальные. Регулярка по всему тексту без фильтра по поду, счётчик по слишком широкому окну, правило на каждый чих — всё это превращается в постоянные тяжёлые запросы. VictoriaLogs начинает отвечать на десятки таких запросов каждый интервал, CPU и память ноды растут, а к latency самого хранилища добавляется ещё и задержка на алертинг. Один кривой алерт способен грузить систему сильнее, чем весь остальной пайплайн приёма логов.
+Когда алерты вешает вся команда из UI, среди них появляются неоптимальные: регулярка по всему тексту без фильтра по поду, слишком широкое окно, правило на каждый чих. VictoriaLogs отвечает на десятки таких запросов каждый интервал; один кривой алерт грузит систему сильнее, чем весь пайплайн приёма логов.
 
-`VMRule` решает это институционально. Каждое правило — явная строка в `vmalert-rules-golang.yaml` или `vmalert-rules-nuxt.yaml`, которую видно в git и которую можно отревьюить до применения в кластер. Видно интервал, запрос, порог, окно `for` — и можно проверить, что у каждого правила стоит узкий фильтр по `kubernetes.pod_labels.app`, а регулярка бьёт только по нужному тексту, не по всему потоку. Дорогой запрос не проскользнёт мимо ревью, а source of truth остаётся один: что в `VMRule`, то и исполняет `vmalert-logs`.
+`VMRule` держит правила в git: интервал, запрос, порог, окно `for` видны до применения в кластер. На ревью проверяют, что у каждого правила узкий фильтр по `kubernetes.pod_labels.app`, а регулярка бьёт только по нужному тексту.
 
 #### Отключить создание алертов через UI нельзя
 
-Плагин `victoriametrics-logs-datasource` объявляет `alerting: true`, поэтому Grafana разрешает создавать алерты по логам через UI независимо от настроек datasource. `manageAlerts: false` в `jsonData` влияет только на **datasource-managed** правила — для VictoriaLogs они всё равно не работают (LogsQL-правила исполняет отдельный `vmalert-logs`, а не встроенный в Grafana ruler), а **Grafana-managed** алерты флаг не затрагивает. Хотя отключить алерты через UI нельзя, все равно рекомендуется создавать и хранить алерты в исходном коде в git.
+Плагин `victoriametrics-logs-datasource` объявляет `alerting: true`, поэтому Grafana разрешает создавать алерты по логам через UI независимо от настроек datasource. `manageAlerts: false` в `jsonData` влияет только на **datasource-managed** правила — для VictoriaLogs они всё равно не работают (LogsQL исполняет `vmalert-logs`, а не Grafana ruler), а **Grafana-managed** алерты флаг не затрагивает. Хранить алерты всё равно нужно в git.
 
 По этой теме заведены два issue:
 
@@ -120,7 +117,7 @@ server:
     enabled: true
 ```
 
-Сервис получит имя `vls-server.vmks.svc.cluster.local` (порт 9428) — именно на него будут смотреть и `vlagent`, и `vmalert-logs`, и datasource Grafana.
+Сервис получит имя `vls-server.vmks.svc.cluster.local` (порт 9428) — на него смотрят `vlagent`, `vmalert-logs` и datasource Grafana.
 
 ## Шаг 3. vlagent
 
@@ -145,11 +142,11 @@ collector:
   excludeFilter: "kubernetes.pod_name:=%{HOSTNAME}"
 ```
 
-`remoteWrite.url` указывает на VictoriaLogs без пути — vlagent сам отправляет логи на `/insert/native`. Это нативный бинарный протокол VictoriaLogs: он используется по умолчанию, не требует `format` и разбора на стороне приёмника, поэтому даёт минимальные накладные расходы по CPU и сети по сравнению с JSON/line-протоколами. Внешние системы (Fluent Bit, Vector, ClickHouse) требуют явного `format: jsonline`.
+`remoteWrite.url` указывает на VictoriaLogs без пути — vlagent сам отправляет логи на `/insert/native`. Это нативный бинарный протокол VictoriaLogs: он используется по умолчанию, не требует `format` и разбора на стороне приёмника, поэтому даёт меньшие накладные расходы по CPU и сети, чем JSON/line-протоколы. Внешние системы (Fluent Bit, Vector, ClickHouse) требуют явного `format: jsonline`.
 
 ### vmalert-logs и правила VMRule
 
-Отдельный `VMAlert` `vmalert-logs` под LogsQL-правила объявлен манифестом [`manifests/vmalert-logs.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-logs.yaml):
+Отдельный `VMAlert` `vmalert-logs` под LogsQL объявлен манифестом [`manifests/vmalert-logs.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-logs.yaml):
 
 ```yaml
 apiVersion: operator.victoriametrics.com/v1beta1
@@ -173,9 +170,7 @@ spec:
     - url: http://vmalertmanager-vmks-victoria-metrics-k8s-stack.vmks.svc.cluster.local:9093
 ```
 
-- `vmalert-logs` берёт LogsQL-выражения из `VMRule` и выполняет их в VictoriaLogs по адресу `datasource.url`;
-- `ruleSelector: type: logs-to-metrics` — выполняет только `VMRule` с этим лейблом;
-- `remoteWrite`/`remoteRead` — состояние алертов пишется в `vmsingle` и восстанавливается оттуда при рестарте.
+`datasource.url` — VictoriaLogs. `ruleSelector: type: logs-to-metrics` — только LogsQL-`VMRule`. `remoteWrite`/`remoteRead` — состояние алертов пишется в `vmsingle` и восстанавливается оттуда при рестарте.
 
 Применяем `vmalert-logs` и правила `VMRule` (сами правила разбираются в Шаге 5):
 
@@ -185,23 +180,23 @@ kubectl apply -f manifests/vmalert-rules-golang.yaml
 kubectl apply -f manifests/vmalert-rules-nuxt.yaml
 ```
 
-Порядок здесь строгий: vmks создаёт CRD и оператор (Шаг 1), VictoriaLogs — datasource (Шаг 2), и только после этого применяются `vmalert-logs` и `VMRule`. Приложения (Шаг 4) поднимаются уже при готовом алертинге.
+Порядок строгий: vmks создаёт CRD и оператор (Шаг 1), VictoriaLogs — datasource (Шаг 2), и только после этого применяются `vmalert-logs` и `VMRule`. Приложения (Шаг 4) поднимаются уже при готовом алертинге.
 
 ## Шаг 4. Приложения, которые падают
 
 ### Go: `apps/golang-app`
 
-Приложение ([`main.go`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/apps/golang-app/main.go)) пишет обычные логи в `stdout` (`infoLog`), а ошибки/panic/fatal — в `stderr` (`errLog`), и содержит эндпоинты под каждый класс ошибок:
+Приложение ([`main.go`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/apps/golang-app/main.go)) пишет обычные логи в `stdout` (`infoLog`), а ошибки/panic/fatal — в `stderr` (`errLog`):
 
 | Эндпоинт  | Что происходит в проде                        | Что ловится |
 | --------- | --------------------------------------------- | ----------- |
-| `/panic`  | `panic("boom: ...")` с `recover` в `defer`    | `panic:` + `ERROR` |
+| `/panic`  | `panic("boom: ...")` с `recover` в `defer`    | `ERROR` |
 | `/nil`    | nil pointer dereference (runtime-паника, без recover) | `panic:` |
 | `/index`  | index out of range (runtime-паника)           | `panic:` |
-| `/fatal`  | `log.Fatalf("FATAL: ...")` → `os.Exit(1)`     | `FATAL` |
+| `/fatal`  | `errLog.Fatalf("FATAL: ...")` → `os.Exit(1)`  | `FATAL` |
 | `/error`  | лог `ERROR: failed to connect ...`, ответ 502 | `ERROR` |
 
-Главное наблюдение: **`panic:` есть и у явного `panic("...")`, и у runtime-паник** (`nil pointer dereference`, `index out of range`). Поэтому одно правило `_msg:~"panic:"` ловит все типы паник разом. `log.Fatal` — отдельный случай: он пишет сообщение и завершает процесс, а pod перезапускается; лог остаётся в VictoriaLogs, и его ловит правило по `FATAL`.
+**`panic:` есть у runtime-паник** (`nil pointer dereference`, `index out of range`) — одно правило `_msg:~"panic:"` ловит оба. Явный `panic("...")` с `recover` в этом приложении уходит в `ERROR: recovered panic ...` и его ловит правило по `ERROR`. `log.Fatal` пишет сообщение и завершает процесс; pod перезапускается, лог остаётся в VictoriaLogs, его ловит правило по `FATAL`.
 
 ```go
 // main.go — фрагмент
@@ -221,7 +216,7 @@ mux.HandleFunc("/nil", func(w http.ResponseWriter, r *http.Request) {
 })
 
 mux.HandleFunc("/fatal", func(w http.ResponseWriter, r *http.Request) {
-    log.Fatalf("FATAL: unrecoverable configuration error on /fatal")
+    errLog.Fatalf("FATAL: unrecoverable configuration error on /fatal")
 })
 ```
 
@@ -229,7 +224,7 @@ mux.HandleFunc("/fatal", func(w http.ResponseWriter, r *http.Request) {
 
 ### Nuxt: `apps/nuxt-app`
 
-Приложение Nitro/Nuxt логирует ошибки серверных хендлеров через `console.error` (то есть в `stderr`) и содержит эндпоинты под каждый класс ошибок:
+Nitro/Nuxt логирует ошибки серверных хендлеров через `console.error` (в `stderr`):
 
 | Эндпоинт      | Что происходит в проде                          | Что ловится |
 | ------------- | ----------------------------------------------- | ----------- |
@@ -239,7 +234,7 @@ mux.HandleFunc("/fatal", func(w http.ResponseWriter, r *http.Request) {
 | `/api/fatal`  | `console.error('NUXT_FATAL: ...')` + `process.exit(1)` | `NUXT_FATAL` |
 | `/api/error-502` | лог `NUXT_502: ...`, ответ 502 (процесс живёт) | `NUXT_502` |
 
-Здесь в лог пишутся явные маркеры `NUXT_ERROR`, `NUXT_UNHANDLED`, `NUXT_REJECTION`, `NUXT_FATAL` и `NUXT_502`, по которым строятся правила. В реальном приложении это будут штатные логи Nitro/Nitro-хендлеров — достаточно договориться о едином формате (`level`, `message`, `requestId`), а правила писать под него.
+Правила строятся по этим маркерам. В реальном приложении достаточно договориться о едином формате (`level`, `message`, `requestId`) и писать правила под него.
 
 ```ts
 // server/api/error.ts — 500 через createError
@@ -283,19 +278,17 @@ kubectl apply -f manifests/golang-app.yaml
 kubectl apply -f manifests/nuxt-app.yaml
 ```
 
-### Почему ошибки обязательно в stderr, а не в stdout
+### Ошибки пишутся только в stderr, а не в stdout
 
-Правило в обоих приложениях жёсткое и единообразное: **обычные логи — в stdout, а panic, fatal, error, 500/502 и необработанные исключения — только в stderr.** Это не вопрос стиля, а часть контракта с пайплайном алертинга. Пара причин.
+В обоих приложениях одно правило: **обычные логи — в stdout, panic/fatal/error/500/502 и необработанные исключения — только в stderr.** Это контракт с пайплайном алертинга.
 
-**Как Kubernetes и vlagent помечают поток.** Kubernetes-рантайм пишет stdout и stderr контейнера в два отдельных файла (`*.log`), а vlagent при чтении размечает каждую строку log-полем `stream=stdout` или `stream=stderr` (это видно и в `_stream`, например `stream="stdout"`). Дальше VictoriaLogs хранит `stream` как обычное поле — по нему можно фильтровать. Если ошибки пишутся в stdout, этого сигнала нет: остаётся гадать об ошибке только по тексту сообщения.
+Kubernetes-рантайм пишет stdout и stderr контейнера в два файла (`*.log`), а vlagent размечает каждую строку полем `stream=stdout` или `stream=stderr`. VictoriaLogs хранит `stream` как обычное поле. Если ошибки пишутся в stdout, этого сигнала нет: остаётся ловить их только по тексту.
 
-**Почему это важно для цены алерта.** В LogsQL ошибки по тексту — самая дорогая операция. Фильтр по полю (`stream:=stderr`) и по лейблу (`kubernetes.pod_labels.app:=...`) — это отбор по уже проиндексированным/агрегированным значениям, он дёшев. А регулярка по сообщению (`_msg:~"panic:"`) обязана прочитать и проматчить тело каждой строки. Поэтому порядок такой: сначала отсеять по app и stream, и только потом гнать регулярку по оставшемуся (обычно крошечному) множеству строк. Без `stream:=stderr` регулярка применялась бы ко всему stdout-потоку приложения — на каждый запуск правила VictoriaLogs дергал бы и разбирал раздутые журналы info/debug.
-
-Одна строка `stream:=stderr` сокращает объём данных, который VictoriaLogs сканирует под регуляркой на исполнение правила, в разы — на приложениях, где основная масса логов штатные (stdout), это может быть десятки и сотни крат.
+В LogsQL регулярка по сообщению (`_msg:~"panic:"`) — самая дорогая операция: она читает тело каждой строки. Фильтр по полю (`stream:=stderr`) и по лейблу (`kubernetes.pod_labels.app:=...`) — отбор по уже проиндексированным значениям, он дёшев. Порядок: сначала app и stream, потом регулярка по оставшимся строкам. Без `stream:=stderr` регулярка шла бы по всему stdout — info/debug на каждый запуск правила.
 
 ### Примерная разница в нагрузке на VictoriaLogs
 
-Точные числа зависят от объёма логов приложения, но соотношение оценить можно. Пусть у приложения за минуту появляется:
+Пусть у приложения за минуту:
 
 - **stdout** (info/debug/access): 10 000 строк;
 - **stderr** (ошибки, panic, warnings): 100 строк.
@@ -305,18 +298,16 @@ kubectl apply -f manifests/nuxt-app.yaml
 | Порядок фильтров в правиле | Сколько строк читает VictoriaLogs под регулярку за исполнение |
 | --- | --- |
 | только `_msg:~"..."` (по всему потоку) | ~20 200 (весь stdout + stderr за 2m) |
-| `app:=...` потом `_msg:~"..."` | ~20 200 (app не разделяет поток сообщения, читаем всё равно весь) |
+| `app:=...` потом `_msg:~"..."` | ~20 200 (app не разделяет поток сообщения) |
 | `app:=...` → `stream:=stderr` → `_msg:~"..."` | 200 (2 минуты только stderr) |
 
-То есть `stream:=stderr` убирает ~99% строк ещё до самой дорогой стадии. А поскольку правило исполняется каждый `interval` (у нас раз в 1m) и сканирует окно `_time` заново (см. раздел про `_time`), выигрыш копится на каждом цикле: без `stream` за час под регулярку ушло бы ~1,2 млн строк, а с ним — ~12 тысяч.
+`stream:=stderr` убирает ~99% строк до регулярки. Правило исполняется каждый `interval` (у нас раз в 1m) и сканирует окно `_time` заново: без `stream` за час под регулярку ушло бы ~1,2 млн строк, с ним — ~12 тысяч.
 
-Важна и сама стоимость операций: отбор по полям и по `_stream` VictoriaLogs делает по индексам/блокам стримов и почти бесплатно, а регулярка — это CPU на распаковку и сравнение текста. Узкий фильтр до регулярки — главный рычаг, удерживающий алертинг по логам дешёвым. Это же работает и в другой последовательности: сначала `stream`, потом `_msg`, а `stats` — в самом конце, когда агрегировать уже почти нечего.
-
-Этим же объясняется рекомендация в Шаге 5 ставить `stream:=stderr` перед `_msg:~"..."`: чем раньше отсеян поток, тем меньше достаётся регулярке.
+Отбор по полям и по `_stream` VictoriaLogs делает по индексам/блокам стримов почти бесплатно; регулярка — CPU на распаковку и сравнение текста. Поэтому в Шаге 5 `stream:=stderr` стоит перед `_msg:~"..."` , а `stats` — в конце, когда агрегировать уже почти нечего.
 
 ## Шаг 5. Правила алертов в VMRule
 
-Правила — это CRD `VMRule`, разбитый на два манифеста по приложениям ([`manifests/vmalert-rules-golang.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-golang.yaml) и [`manifests/vmalert-rules-nuxt.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-nuxt.yaml)), которые исполняет `vmalert-logs` (Шаг 3). Разбиение по файлу на приложение упрощает ревью и CODEOWNERS: правки правил golang-app не пересекаются с правками nuxt-app. Оба `VMRule` уже применены в конце Шага 3; ниже — разбор содержимого.
+Правила — два CRD `VMRule` по приложениям ([`manifests/vmalert-rules-golang.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-golang.yaml) и [`manifests/vmalert-rules-nuxt.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-nuxt.yaml)). Их исполняет `vmalert-logs` (Шаг 3). Разбиение по файлу упрощает ревью и CODEOWNERS. Оба `VMRule` уже применены в конце Шага 3; ниже — разбор содержимого.
 
 ```yaml
 apiVersion: operator.victoriametrics.com/v1beta1
@@ -363,7 +354,6 @@ spec:
           labels:
             severity: critical
             app: golang-app
-          # ...
 
         - alert: GolangErrorLog
           expr: |
@@ -377,113 +367,43 @@ spec:
           labels:
             severity: warning
             app: golang-app
-          # ...
 ```
 
-```yaml
-apiVersion: operator.victoriametrics.com/v1beta1
-kind: VMRule
-metadata:
-  name: vmalert-rules-nuxt
-  namespace: vmks
-  labels:
-    type: logs-to-metrics
-spec:
-  groups:
-    - name: nuxt-app
-      type: vlogs
-      # Как часто выполняется LogsQL-запрос этой группы: раз в минуту.
-      # Переопределяет evaluationInterval из VMAlert.
-      interval: 1m
-      rules:
-        - alert: NuxtServerError
-          expr: |
-            _time: 2m
-              | kubernetes.pod_labels.app:=nuxt-app
-              | stream:=stderr
-              | _msg:~"NUXT_ERROR"
-              | stats count() as errors
-              | filter errors:>0
-          for: 2m
-          # ...
+У nuxt-app та же схема пайпа (`_time` → app → `stream:=stderr` → `_msg` → `stats` → `filter`), другие маркеры и окна `for`:
 
-        - alert: NuxtUnhandledRejection
-          expr: |
-            _time: 2m
-              | kubernetes.pod_labels.app:=nuxt-app
-              | stream:=stderr
-              | _msg:~"NUXT_UNHANDLED"
-              | stats count() as unhandled
-              | filter unhandled:>0
-          for: 1m
-          # ...
-
-        - alert: NuxtUnhandledPromiseRejection
-          expr: |
-            _time: 2m
-              | kubernetes.pod_labels.app:=nuxt-app
-              | stream:=stderr
-              | _msg:~"NUXT_REJECTION"
-              | stats count() as rejections
-              | filter rejections:>0
-          for: 1m
-          # ...
-
-        - alert: NuxtFatalLog
-          expr: |
-            _time: 2m
-              | kubernetes.pod_labels.app:=nuxt-app
-              | stream:=stderr
-              | _msg:~"NUXT_FATAL"
-              | stats count() as fatals
-              | filter fatals:>0
-          for: 1m
-          # ...
-
-        - alert: NuxtBadGateway
-          expr: |
-            _time: 2m
-              | kubernetes.pod_labels.app:=nuxt-app
-              | stream:=stderr
-              | _msg:~"NUXT_502"
-              | stats count() as badgateways
-              | filter badgateways:>0
-          for: 2m
-          # ...
-```
+- `NuxtServerError` (`NUXT_ERROR`, `for: 2m`), `NuxtBadGateway` (`NUXT_502`, `for: 2m`) — warning;
+- `NuxtUnhandledRejection` (`NUXT_UNHANDLED`), `NuxtUnhandledPromiseRejection` (`NUXT_REJECTION`), `NuxtFatalLog` (`NUXT_FATAL`) — critical, `for: 1m`.
 
 Разбор LogsQL-выражения:
 
-- `_time: 2m` — окно выборки: правила считают события за последние 2 минуты;
+- `_time: 2m` — окно выборки: события за последние 2 минуты;
 - `kubernetes.pod_labels.app:=golang-app` — фильтр по лейблу пода (добавил `vlagent`);
-- `stream:=stderr` — фильтр по стандартному потоку: оставляем только stderr, куда приложение обязано писать ошибки;
-- `_msg:~"panic:"` — регулярка по тексту сообщения;
-- `stats by (kubernetes.pod_name) count() as panics` — агрегация числа совпадений по поду;
-- `filter panics:>0` — оставляем только группы, где сработало.
+- `stream:=stderr` — только stderr, куда приложение пишет ошибки;
+- `_msg:~"panic:"` — регулярка по тексту;
+- `stats by (kubernetes.pod_name) count() as panics` — число совпадений по поду;
+- `filter panics:>0` — только группы, где сработало.
 
-Порядок фильтров не случаен: сначала дёшево отсеиваем по лейблу пода и по `stream`, и только потом на оставшемся (уже маленьком) множестве строк выполняем самую дорогую операцию — регулярку `_msg:~"..."`. Регулярка по всему тексту каждого сообщения — главный потребитель CPU в лог-запросе, поэтому до неё нужно пропускать как можно меньше строк.
+По умолчанию `vmalert` считает правила `prometheus`-типа и валидирует выражения как PromQL. `type: vlogs` на группе говорит, что выражения написаны на LogsQL. Time-фильтр задан явно (`_time: 2m`) — это окно VictoriaLogs сканирует на каждом исполнении.
 
-Почему `type: vlogs` и `interval` на уровне группы: по умолчанию `vmalert` считает правила `prometheus`-типа и валидирует выражения как PromQL. `type: vlogs` говорит ему, что выражения написаны на LogsQL. Time-фильтр в выражениях задан явно (`_time: 2m`) — именно это окно сканирует VictoriaLogs на каждом исполнении.
+#### `interval` против `_time`
 
-#### `interval` против `_time`: два независимых параметра
+У группы `interval: 1m`, в выражении — `_time: 2m`. Они не дублируют друг друга:
 
-У группы `interval: 1m`, в выражении — `_time: 2m`. Они управляют разным и не дублируют друг друга:
+- `interval` (или `evaluationInterval: 1m` у `VMAlert`) — как часто `vmalert-logs` исполняет группу;
+- `_time` — какое окно данных сканирует каждый запрос.
 
-- `interval` (или глобальный `evaluationInterval: 1m` у `VMAlert`) — как часто `vmalert-logs` исполняет группу: раз в минуту запрос к VictoriaLogs и обновление состояния алерта.
-- `_time` — какое окно данных сканирует каждый запрос: статистика за последние 2 минуты.
-
-Окно шире интервала, чтобы сгладить одиночный всплеск, который может не попасть в минутную выборку или оказаться шумом: правило срабатывает устойчиво, а не дёргается на каждой строке. Цена — запрос сканирует 2 минуты вместо 1: нагрузка на VictoriaLogs растёт с шириной окна, а не с частотой.
+Окно шире интервала, чтобы сгладить одиночный всплеск: правило срабатывает устойчиво, а не дёргается на каждой строке. Нагрузка на VictoriaLogs растёт с шириной окна, а не с частотой.
 
 Если параметры разъедутся:
 
 - `interval` больше `_time` (раз в 5m, окно 1m) — «слепые» промежутки: событие между запусками пропускается, алерт моргает.
-- `interval` сильно меньше `_time` (раз в 10s, окно 5m) — почти каждый запуск пересчитывает одни и те же 5 минут: лишняя нагрузка без выигрыша в свежести, поэтому интервал меньше 1m для логов брать не стоит.
+- `interval` сильно меньше `_time` (раз в 10s, окно 5m) — почти каждый запуск пересчитывает одни и те же 5 минут. Интервал меньше 1m для логов брать не стоит.
 
-У нас обе величины выровнены с запасом на `for`: критичные правила исполняются раз в минуту с окном 2m и `for: 1m`, поэтому от появления ошибки в логе до FIRING-сообщения проходит не больше пары минут.
+У нас критичные правила исполняются раз в минуту с окном 2m и `for: 1m`: от появления ошибки в логе до FIRING — не больше пары минут.
 
 #### Почему не стоит брать слишком широкое `_time`
 
-Казалось бы, чем шире окно, тем надёжнее алерт: поставил `_time: 1h` — и ни одна ошибка не проскочит. Но `_time` — это не «посмотреть назад на час», а «каждое исполнение заново сканирует весь час». При `interval: 1m` на каждом запуске VictoriaLogs перечитывает последние 60 минут логов, из которых 59 минут уже отсканированы минутой ранее.
+`_time: 1h` — не «посмотреть назад на час», а «каждое исполнение заново сканирует весь час». При `interval: 1m` из этих 60 минут 59 уже отсканированы минутой ранее.
 
 Схема: одна строка — одно исполнение правила, длина строки — объём сканируемых логов.
 
@@ -495,23 +415,21 @@ _time: 2m — окно минимально, повторяется только
 
 ![Минимальное окно _time: 2m](time-window-2m.png)
 
-Каждый запуск сдвигает окно на 1 минуту и заново сканирует почти всё то же самое: с `_time: 1h` за 10 минут правило перечитает час логов десять раз, хотя нового материала всего 10 минут. С `_time: 2m` сканируется 2 минуты вместо 60 — а результат тот же: алерт срабатывает и держится `for: 1m`.
+С `_time: 1h` за 10 минут правило перечитает час логов десять раз, хотя нового материала 10 минут. С `_time: 2m` сканируется 2 минуты вместо 60 — алерт срабатывает и держится `for: 1m` так же. `_time` берут минимально достаточным, чтобы перекрыть `interval` и `for` (у нас — 2m при `interval: 1m`).
 
-Нагрузка на VictoriaLogs пропорциональна ширине окна, а не частоте исполнения. Поэтому `_time` берут минимально достаточным, чтобы перекрыть `interval` и `for` (у нас — 2m при `interval: 1m`). Широкое окно вроде `1h` не делает алерт надёжнее, а лишь гоняет одни и те же логи по кругу.
+`stats`-pipe обязателен: `vmalert-logs` забирает не сами строки, а результаты `/select/logsql/stats_query` (счётчики, гистограммы) в формате Prometheus API — их он сравнивает с порогом.
 
-`stats`-pipe обязателен: `vmalert-logs` забирает из VictoriaLogs не сами строки, а результаты `/select/logsql/stats_query` (счётчики, гистограммы) в формате Prometheus API — именно их он сравнивает с порогом.
+Почему для Nuxt отдельные алерты, а не один с общей регуляркой:
 
-Почему для Nuxt отдельные алерты (`NuxtServerError`, `NuxtUnhandledRejection`, `NuxtUnhandledPromiseRejection`, `NuxtFatalLog`, `NuxtBadGateway`), а не один с общей регуляркой:
+- разные окна `for`: `2m` для «мягких» (`NuxtServerError`, `NuxtBadGateway`) и `1m` для критичных — в одном алерте только одно окно;
+- разные `labels` и маршруты: критические события и 500/502 обычно хотят разного приоритета;
+- в алерте сразу виден класс сбоя.
 
-- разные окна `for`: `2m` для «мягких» (`NuxtServerError`, `NuxtBadGateway`) и `1m` для критичных (`NuxtUnhandledRejection`, `NuxtUnhandledPromiseRejection`, `NuxtFatalLog`), а в одном алерте можно задать только одно окно;
-- разная реакция: критические события и 500/502 обычно хотят разного приоритета/получателей, а отдельные алерты позволяют маркировать их разными `labels` и роутить отдельно;
-- проще диагностика: в алерте сразу виден класс сбоя, не разбирая текст сообщения.
-
-Объединять в один алерт имеет смысл только если события обрабатываются одинаково — тот же responder, приоритет и окно `for`. Тогда несколько правил можно заменить одним с общей регуляркой, но теряется различие классов в названии алерта и раздельное окно `for`.
+Объединять имеет смысл только если responder, приоритет и `for` совпадают.
 
 ## Шаг 6. Alertmanager → Telegram напрямую
 
-Токен кладём в Secret, а в конфиг передаём путь к нему через `bot_token_file` — токен не светится в конфиге.
+Токен кладём в Secret, в конфиг передаём путь через `bot_token_file` — токен не светится в конфиге.
 
 ```yaml
 # telegram-bot-token-secret.yaml
@@ -525,7 +443,7 @@ data:
   bot-token: ${bot_token_b64}
 ```
 
-В vmks-values (см. Шаг 1) подключаем Secret к Alertmanager и описываем ресивер. Помимо ресивера Telegram здесь есть служебный `null`-ресивер и маршруты, отправляющие в него служебные алерты vmks (`Watchdog`, `InfoInhibitor`) — в Telegram они не шлются:
+В vmks-values (см. Шаг 1) подключаем Secret к Alertmanager. Служебные алерты vmks (`Watchdog`, `InfoInhibitor`, `RecordingRulesNoData`) уходят в `null`-ресивер и в Telegram не шлются:
 
 ```yaml
 alertmanager:
@@ -549,6 +467,9 @@ alertmanager:
           receiver: "null"
         - matchers:
             - alertname="InfoInhibitor"
+          receiver: "null"
+        - matchers:
+            - alertname="RecordingRulesNoData"
           receiver: "null"
     receivers:
       - name: "null"
@@ -576,8 +497,7 @@ alertmanager:
 - `bot_token_file` — путь к файлу с токеном (предпочтительнее, чем `bot_token` в открытом виде);
 - `chat_id` — ID чата/группы (отрицательное число для групп); подставляется Terraform'ом через `${telegram_chat_id}`;
 - `parse_mode: HTML` — разметка сообщения;
-- `send_resolved: true` — отправлять уведомление и при разрешении алерта.
-
+- `send_resolved: true` — уведомление и при разрешении алерта.
 
 В Telegram приходят алерты:
 
@@ -585,9 +505,7 @@ alertmanager:
 
 ## Заключение
 
-Мы получили алертинг, который срабатывает на сам факт появления ошибки в логах — `panic`, `log.Fatal`, 500-я или необработанное исключение — и шлёт его в Telegram. Правила живут в одном CRD `VMRule`, datasource — VictoriaLogs, а LogsQL-правила исполняет отдельный `vmalert-logs`.
-
-Это та же связка, которую команды используют для метрик, но применённая к логам: `vmalert` исполняет LogsQL вместо PromQL, а Alertmanager остаётся общим — так метрики и логи сводятся в один поток уведомлений.
+Алертинг срабатывает на появление в логах `panic`, `log.Fatal`, 500 или необработанного исключения и шлёт его в Telegram. Правила — два `VMRule` (golang и nuxt), datasource — VictoriaLogs, LogsQL исполняет отдельный `vmalert-logs`. Alertmanager общий с метриками: оба потока сходятся в одни уведомления.
 
 Полезные ссылки:
 
