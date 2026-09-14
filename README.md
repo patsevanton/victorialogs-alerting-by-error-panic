@@ -87,9 +87,14 @@ vmalert:
 
 `VMRule` решает это институционально. Каждое правило — явная строка в `vmalert-rules-golang.yaml` или `vmalert-rules-nuxt.yaml`, которую видно в git и которую можно отревьюить до применения в кластер. Видно интервал, запрос, порог, окно `for` — и можно проверить, что у каждого правила стоит узкий фильтр по `kubernetes.pod_labels.app`, а регулярка бьёт только по нужному тексту, не по всему потоку. Дорогой запрос не проскользнёт мимо ревью, а source of truth остаётся один: что в `VMRule`, то и исполняет `vmalert-logs`.
 
-#### Отключить алерты через UI нельзя
+#### Отключить создание алертов через UI нельзя
 
 Плагин `victoriametrics-logs-datasource` объявляет `alerting: true`, поэтому Grafana разрешает создавать алерты по логам через UI независимо от настроек datasource. `manageAlerts: false` в `jsonData` влияет только на **datasource-managed** правила — для VictoriaLogs они всё равно не работают (LogsQL-правила исполняет отдельный `vmalert-logs`, а не встроенный в Grafana ruler), а **Grafana-managed** алерты флаг не затрагивает. Хотя отключить алерты через UI нельзя, все равно рекомендуется создавать и хранить алерты в исходном коде в git.
+
+По этой теме заведены два issue:
+
+- [VictoriaMetrics/victorialogs-datasource#727](https://github.com/VictoriaMetrics/victorialogs-datasource/issues/727)
+- [grafana/grafana#132468](https://github.com/grafana/grafana/issues/132468)
 
 ## Шаг 2. VictoriaLogs
 
