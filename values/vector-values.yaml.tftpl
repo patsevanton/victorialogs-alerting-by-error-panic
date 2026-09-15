@@ -38,9 +38,14 @@ customConfig:
       # как есть, поэтому фильтры правил (stream:=stderr, app:=..., pod_name)
       # остаются без изменений. Вложенный kubernetes.pod_labels VictoriaLogs
       # сам сглаживает в kubernetes.pod_labels.app.
+      #
+      # Без _stream_fields VictoriaLogs кладёт все строки в один поток `{}`.
+      # ignore_fields режет шум Vector (node_labels, annotations, container_id).
       query:
         _msg_field: message
         _time_field: timestamp
+        _stream_fields: kubernetes.pod_namespace,kubernetes.pod_name,kubernetes.container_name
+        ignore_fields: file,source_type,kubernetes.container_id,kubernetes.container_image_id,kubernetes.pod_ip,kubernetes.pod_ips,kubernetes.pod_uid,kubernetes.node_labels.*,kubernetes.pod_annotations.*,kubernetes.namespace_labels.*
 
   # vector.dev/exclude: "true" лейбл под Vector-пода добавляется чартом по
   # умолчанию (podLabels), а kubernetes_logs source по умолчанию пропускает
