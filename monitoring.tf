@@ -1,5 +1,5 @@
 locals {
-  # Namespace, где живёт весь стек (VictoriaLogs, vlagent, vmks, vmalert).
+  # Namespace, где живёт весь стек (VictoriaLogs, Vector, vmks, vmalert).
   monitoring_namespace = "vmks"
 
   # Имя VictoriaLogs single-node и внутренний URL read-эндпоинта (:9428).
@@ -14,8 +14,8 @@ locals {
   # vmks ставится первым: vmServiceScrape (см. vls-values.yaml.tftpl) уводит
   # собственные метрики VictoriaLogs в vmagent/vmsingle из victoria-metrics-k8s-stack.
 
-  # ----- vlagent (victoria-logs-collector) -----
-  vlc_name_override = "vlc"
+  # ----- Vector (helm chart vector, role Agent) -----
+  # Вместо vlagent: https://github.com/VictoriaMetrics/VictoriaLogs/issues/1790
 
   # ----- Values, отрендеренные из шаблонов *.tftpl -----
   vmks_values = templatefile("${path.module}/values/vmks-values.yaml.tftpl", {
@@ -29,9 +29,8 @@ locals {
     vls_name_override = local.vls_name_override
   })
 
-  vlc_values = templatefile("${path.module}/values/vlc-values.yaml.tftpl", {
-    vlc_name_override = local.vlc_name_override
-    vls_server_url    = local.vls_server_url
+  vector_values = templatefile("${path.module}/values/vector-values.yaml.tftpl", {
+    vls_server_url = local.vls_server_url
   })
 
   # Secret с токеном Telegram-бота. Рендерится на диск, применяется вручную
@@ -61,9 +60,9 @@ resource "local_file" "write_vls_values" {
   file_permission = "0644"
 }
 
-resource "local_file" "write_vlc_values" {
-  content         = local.vlc_values
-  filename        = "${path.module}/values/vlc-values.yaml"
+resource "local_file" "write_vector_values" {
+  content         = local.vector_values
+  filename        = "${path.module}/values/vector-values.yaml"
   file_permission = "0644"
 }
 

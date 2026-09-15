@@ -33,7 +33,7 @@ spec:
             summary: "panic в golang-app"
             description: |
               Паник у пода {{ index $labels "kubernetes.pod_name" }} за 2m: {{ $value }}.
-              Логи: Kubernetes -> vlagent -> VictoriaLogs.
+              Логи: Kubernetes -> Vector -> VictoriaLogs.
 
         - alert: GolangFatalLog
           expr: |

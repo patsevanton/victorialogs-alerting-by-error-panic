@@ -46,7 +46,7 @@ terraform.rc
 # Значения генерируются из values/*.tftpl через Terraform (monitoring.tf)
 values/vmks-values.yaml
 values/vls-values.yaml
-values/vlc-values.yaml
+values/vector-values.yaml
 
 # Сгенерированный манифест секрета Telegram (содержит токен)
 telegram-bot-token-secret.yaml

@@ -29,7 +29,7 @@ terraform apply
 
 `terraform apply` создаёт кластер и Traefik, а также рендерит на диск:
 
-- `values/vmks-values.yaml`, `values/vls-values.yaml`, `values/vlc-values.yaml`;
+- `values/vmks-values.yaml`, `values/vls-values.yaml`, `values/vector-values.yaml`;
 - `telegram-bot-token-secret.yaml`;
 - `manifests/mihomo-proxy.yaml`.
 

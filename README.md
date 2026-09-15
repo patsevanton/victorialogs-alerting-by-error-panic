@@ -1,12 +1,12 @@
 # Алерты по ошибкам и panic из логов приложений: VictoriaLogs + vmalert + Alertmanager → Telegram
 
-ждем https://github.com/VictoriaMetrics/VictoriaLogs/issues/1790
+vlagent не используем из-за [VictoriaMetrics/VictoriaLogs#1790](https://github.com/VictoriaMetrics/VictoriaLogs/issues/1790) — вместо него логи собирает Vector.
 
 ## Введение
 
 Классическая ситуация: Go-сервис падает с `panic: runtime error: invalid memory address or nil pointer dereference`, Nuxt-фронтенд логирует `NUXT_UNHANDLED: unhandled rejection`. Клиент видит лишь общее «что-то сломалось» — точный текст ошибки остаётся только в логах.
 
-Решение — алертинг по логам. Связка **VictoriaLogs + vlagent + vmalert + Alertmanager** следит за потоком, и как только приложение пишет `panic`, `log.Fatal` или `NUXT_UNHANDLED`, в Telegram уходит алерт. Ниже — как поднять эту связку в Kubernetes без лишней нагрузки на хранилище.
+Решение — алертинг по логам. Связка **VictoriaLogs + Vector + vmalert + Alertmanager** следит за потоком, и как только приложение пишет `panic`, `log.Fatal` или `NUXT_UNHANDLED`, в Telegram уходит алерт. Ниже — как поднять эту связку в Kubernetes без лишней нагрузки на хранилище.
 
 ## Архитектура
 
@@ -23,7 +23,7 @@
 
 1. Поднимаем `victoria-metrics-k8s-stack` (vmks): `vmagent`, `vmsingle`, `Alertmanager`, Grafana и CRD оператора (состав — в таблице ниже).
 2. Приложения пишут логи в `stdout`/`stderr`.
-3. `vlagent` с каждой ноды собирает логи контейнеров и отправляет их в VictoriaLogs (`/insert/native`).
+3. Vector (DaemonSet) с каждой ноды собирает логи контейнеров и отправляет их в VictoriaLogs через Elasticsearch bulk API (`/insert/elasticsearch/`).
 4. `vmalert-logs` раз в `1m` исполняет LogsQL-запросы из `VMRule` против VictoriaLogs (`/select/logsql/stats_query`).
 5. Сработавшее правило уходит в Alertmanager.
 6. Alertmanager через `telegram_configs` отправляет сообщение в Telegram-бота.
@@ -36,13 +36,13 @@
 - **Ingress-контроллер**, чтобы зайти в Grafana;
 - **`kubectl` и `helm`**.
 
-Компоненты (все, кроме приложений, — в namespace `vmks`):
+Компоненты (все — в namespace `vmks`, кроме Vector в `vector` и приложений в `apps`):
 
 | Компонент | Чарт / манифест | Роль |
 | --- | --- | --- |
 | victoria-metrics-k8s-stack (vmks) | `victoria-metrics-k8s-stack` | vmagent, vmsingle, встроенный vmalert, Alertmanager, Grafana |
 | VictoriaLogs | `victoria-logs-single` | хранилище логов (single-node) |
-| vlagent | `victoria-logs-collector` | сбор логов подов (DaemonSet) |
+| Vector | `vector` | сбор логов подов (DaemonSet, роль Agent, namespace `vector`) |
 | vmalert-logs | `manifests/vmalert-logs.yaml` | исполняет LogsQL-правила из `VMRule` |
 | VMRule | `manifests/vmalert-rules-golang.yaml`, `manifests/vmalert-rules-nuxt.yaml` | правила алертов на LogsQL (по файлу на приложение) |
 | golang-app / nuxt-app | `manifests/golang-app.yaml`, `manifests/nuxt-app.yaml` | приложения, роняющие panic/error (namespace `apps`) |
@@ -119,32 +119,67 @@ server:
     enabled: true
 ```
 
-Сервис получит имя `vls-server.vmks.svc.cluster.local` (порт 9428) — на него смотрят `vlagent`, `vmalert-logs` и datasource Grafana.
+Сервис получит имя `vls-server.vmks.svc.cluster.local` (порт 9428) — на него смотрят Vector, `vmalert-logs` и datasource Grafana.
 
-## Шаг 3. vlagent
+## Шаг 3. Vector
 
-Собираем логи всех подов через DaemonSet `vlagent`:
+Собираем логи всех подов через DaemonSet Vector (helm chart `vector`, роль `Agent`). Вместо `vlagent` используем Vector из-за [VictoriaMetrics/VictoriaLogs#1790](https://github.com/VictoriaMetrics/VictoriaLogs/issues/1790).
 
 ```bash
-helm upgrade --install vlc vm/victoria-logs-collector \
-  --namespace vmks \
-  --version 0.3.7 \
-  --values values/vlc-values.yaml
+helm repo add vector https://helm.vector.dev
+helm repo update
+
+helm upgrade --install vector vector/vector \
+  --namespace vector --create-namespace \
+  --version 0.58.0 \
+  --values values/vector-values.yaml
 ```
 
 ```yaml
-# vlagent (DaemonSet) собирает логи всех подов и шлёт в VictoriaLogs.
-nameOverride: vlc
+# Vector (DaemonSet, роль Agent) собирает логи всех подов и шлёт в VictoriaLogs.
+role: Agent
 
-remoteWrite:
-  - url: http://vls-server.vmks.svc.cluster.local:9428
+customConfig:
+  data_dir: /vector-data-dir
 
-collector:
-  # Не собираем логи самого коллектора (иначе будет шум).
-  excludeFilter: "kubernetes.pod_name:=%{HOSTNAME}"
+  api:
+    enabled: true
+    address: 0.0.0.0:8686
+
+  sources:
+    kubernetes_logs:
+      type: kubernetes_logs
+
+  sinks:
+    vlogs:
+      type: elasticsearch
+      inputs: [kubernetes_logs]
+      endpoints:
+        - http://vls-server.vmks.svc.cluster.local:9428/insert/elasticsearch/
+      api_version: v8
+      mode: bulk
+      compression: gzip
+      healthcheck:
+        enabled: false
+      query:
+        _msg_field: message
+        _time_field: timestamp
 ```
 
-`remoteWrite.url` указывает на VictoriaLogs без пути — vlagent сам отправляет логи на `/insert/native`. Это нативный бинарный протокол VictoriaLogs: он используется по умолчанию, не требует `format` и разбора на стороне приёмника, поэтому даёт меньшие накладные расходы по CPU и сети, чем JSON/line-протоколы. Внешние системы (Fluent Bit, Vector, ClickHouse) требуют явного `format: jsonline`.
+`query._msg_field: message` и `query._time_field: timestamp` маппят поля Vector на спецполя VictoriaLogs: текст берётся из `message`, время — из `timestamp`. После этого в VictoriaLogs `_msg` и `_time` заполнены так же, как при vlagent, а `stream`, `kubernetes.pod_labels.*` и `kubernetes.pod_name` Vector отдаёт как есть — поэтому правила `VMRule` из Шага 5 не меняются.
+
+Логи самого коллектора не собираются: чарт ставит поду лейбл `vector.dev/exclude: "true"`, а source `kubernetes_logs` по умолчанию пропускает поды с этим лейблом.
+
+### Как Vector шлёт в VictoriaLogs: протоколы
+
+Vector не умеет нативный протокол vlagent (`/insert/native`). Он передаёт логи через HTTP API VictoriaLogs. Есть два рабочих варианта:
+
+| Протокол | Sink `type` | Как в VictoriaLogs | Особенности |
+| --- | --- | --- | --- |
+| **Elasticsearch bulk** (используем) | `elasticsearch` | `/insert/elasticsearch/` | bulk-батчинг, gzip, `api_version: v8` — дешёвая доставка больших объёмов. Рекомендован в [доке VictoriaLogs](https://docs.victoriametrics.com/victorialogs/data-ingestion/vector/) |
+| HTTP JSON stream (ndjson) | `http` | `/insert/jsonline` | codec `json` + `framing: newline_delimited`, проще в отладке, но без bulk-аккумуляции — на больших потоках дороже |
+
+Мы берём **Elasticsearch bulk**: он агрегирует строки в пакеты и сжимает их, что для потока логов Kubernetes даёт меньше запросов и накладных расходов по CPU/сети, чем построчная ndjson-отправка.
 
 ### vmalert-logs и правила VMRule
 
@@ -284,7 +319,7 @@ kubectl apply -f manifests/nuxt-app.yaml
 
 В обоих приложениях одно правило: **обычные логи — в stdout, panic/fatal/error/500/502 и необработанные исключения — только в stderr.** Это контракт с пайплайном алертинга.
 
-Kubernetes-рантайм пишет stdout и stderr контейнера в два файла (`*.log`), а vlagent размечает каждую строку полем `stream=stdout` или `stream=stderr`. VictoriaLogs хранит `stream` как обычное поле. Если ошибки пишутся в stdout, этого сигнала нет: остаётся ловить их только по тексту.
+Kubernetes-рантайм пишет stdout и stderr контейнера в два файла (`*.log`), а Vector размечает каждую строку полем `stream=stdout` или `stream=stderr`. VictoriaLogs хранит `stream` как обычное поле. Если ошибки пишутся в stdout, этого сигнала нет: остаётся ловить их только по тексту.
 
 В LogsQL регулярка по сообщению (`_msg:~"panic:"`) — самая дорогая операция: она читает тело каждой строки. Фильтр по полю (`stream:=stderr`) и по лейблу (`kubernetes.pod_labels.app:=...`) — отбор по уже проиндексированным значениям, он дёшев. Порядок: сначала app и stream, потом регулярка по оставшимся строкам. Без `stream:=stderr` регулярка шла бы по всему stdout — info/debug на каждый запуск правила.
 
@@ -379,7 +414,7 @@ spec:
 Разбор LogsQL-выражения:
 
 - `_time: 2m` — окно выборки: события за последние 2 минуты;
-- `kubernetes.pod_labels.app:=golang-app` — фильтр по лейблу пода (добавил `vlagent`);
+- `kubernetes.pod_labels.app:=golang-app` — фильтр по лейблу пода (добавил Vector);
 - `stream:=stderr` — только stderr, куда приложение пишет ошибки;
 - `_msg:~"panic:"` — регулярка по тексту;
 - `stats by (kubernetes.pod_name) count() as panics` — число совпадений по поду;
@@ -513,7 +548,8 @@ alertmanager:
 
 - [Alerting with Logs](https://docs.victoriametrics.com/victorialogs/vmalert/) — vmalert + VictoriaLogs
 - [VictoriaLogs Single Helm chart](https://docs.victoriametrics.com/helm/victoria-logs-single/)
-- [VictoriaLogs Collector (vlagent)](https://docs.victoriametrics.com/helm/victoria-logs-collector/)
-- [vlagent](https://docs.victoriametrics.com/victorialogs/vlagent/)
+- [VictoriaLogs: Vector data ingestion](https://docs.victoriametrics.com/victorialogs/data-ingestion/vector/) — как Vector пишет логи в VictoriaLogs
+- [Vector: install via Helm](https://vector.dev/docs/setup/installation/package-managers/helm/)
+- [VictoriaMetrics/VictoriaLogs#1790](https://github.com/VictoriaMetrics/VictoriaLogs/issues/1790) — почему вместо vlagent используется Vector
 - [LogsQL](https://docs.victoriametrics.com/victorialogs/logsql/)
 - [Alertmanager: telegram_config](https://prometheus.io/docs/alerting/latest/configuration/#telegram_config)

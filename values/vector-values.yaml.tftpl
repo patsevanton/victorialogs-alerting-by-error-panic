@@ -1,0 +1,47 @@
+# Vector (DaemonSet, роль Agent) собирает логи всех подов и шлёт в VictoriaLogs.
+# Генерируется Terraform'ом из values/vector-values.yaml.tftpl через templatefile()
+# (monitoring.tf). Параметры приходят из local.*.
+#
+# Вместо vlagent используется Vector: vlagent не используем из-за
+# https://github.com/VictoriaMetrics/VictoriaLogs/issues/1790
+
+# Роль Agent = DaemonSet на каждой ноде, читает /var/log/pods через hostPath.
+role: Agent
+
+customConfig:
+  data_dir: /vector-data-dir
+
+  api:
+    enabled: true
+    address: 0.0.0.0:8686
+
+  sources:
+    kubernetes_logs:
+      type: kubernetes_logs
+
+  sinks:
+    vlogs:
+      type: elasticsearch
+      inputs: [kubernetes_logs]
+      endpoints:
+        - ${vls_server_url}/insert/elasticsearch/
+      api_version: v8
+      mode: bulk
+      compression: gzip
+      healthcheck:
+        enabled: false
+      # Маппинг полей Vector -> VictoriaLogs:
+      #   message   -> _msg    (текст лога; у Vector текст в поле message, а
+      #                         VictoriaLogs по умолчанию ищет его в _msg);
+      #   timestamp -> _time   (время события, а не время доставки).
+      # `stream`, `kubernetes.pod_labels.*`, `kubernetes.pod_name` Vector отдаёт
+      # как есть, поэтому фильтры правил (stream:=stderr, app:=..., pod_name)
+      # остаются без изменений. Вложенный kubernetes.pod_labels VictoriaLogs
+      # сам сглаживает в kubernetes.pod_labels.app.
+      query:
+        _msg_field: message
+        _time_field: timestamp
+
+  # vector.dev/exclude: "true" лейбл под Vector-пода добавляется чартом по
+  # умолчанию (podLabels), а kubernetes_logs source по умолчанию пропускает
+  # поды с этим лейблом — так не собираем собственные логи коллектора.
