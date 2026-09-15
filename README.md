@@ -164,9 +164,13 @@ customConfig:
       query:
         _msg_field: message
         _time_field: timestamp
+        _stream_fields: kubernetes.pod_namespace,kubernetes.pod_name,kubernetes.container_name
+        ignore_fields: file,source_type,kubernetes.container_id,kubernetes.container_image_id,kubernetes.pod_ip,kubernetes.pod_ips,kubernetes.pod_uid,kubernetes.node_labels.*,kubernetes.pod_annotations.*,kubernetes.namespace_labels.*
 ```
 
 `query._msg_field: message` и `query._time_field: timestamp` маппят поля Vector на спецполя VictoriaLogs: текст берётся из `message`, время — из `timestamp`. После этого в VictoriaLogs `_msg` и `_time` заполнены так же, как при vlagent, а `stream`, `kubernetes.pod_labels.*` и `kubernetes.pod_name` Vector отдаёт как есть — поэтому правила `VMRule` из Шага 5 не меняются.
+
+`_stream_fields` задаёт поток VictoriaLogs (без него все строки попадают в `_stream: {}`). `ignore_fields` отбрасывает шум Vector: `file`, `source_type`, id контейнера/пода, `node_labels.*`, `pod_annotations.*`.
 
 Логи самого коллектора не собираются: чарт ставит поду лейбл `vector.dev/exclude: "true"`, а source `kubernetes_logs` по умолчанию пропускает поды с этим лейблом.
 

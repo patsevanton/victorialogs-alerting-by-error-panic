@@ -1,5 +1,5 @@
 locals {
-  # Namespace, где живёт весь стек (VictoriaLogs, Vector, vmks, vmalert).
+  # Namespace стека VictoriaMetrics/VictoriaLogs (vmks, vmalert). Vector — в ns vector.
   monitoring_namespace = "vmks"
 
   # Имя VictoriaLogs single-node и внутренний URL read-эндпоинта (:9428).
