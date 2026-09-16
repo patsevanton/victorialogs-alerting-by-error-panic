@@ -28,7 +28,7 @@ flowchart TD
     VMA -->|notify| AM["Alertmanager"]
     AM -->|telegram_configs| TG["Telegram"]
 
-    Grafana["Grafana<br/>(manageAlerts: false для VictoriaLogs)"] -->|datasource| VL
+    Grafana["Grafana"] -->|datasource| VL
 
     VL -->|/metrics| VMAgent["vmagent"]
     VMAgent -->|remoteWrite| VMSingle
@@ -339,6 +339,8 @@ kubectl apply -f manifests/nuxt-app.yaml
 В обоих приложениях одно правило: **обычные логи — в stdout, panic/fatal/error/500/502 и необработанные исключения — только в stderr.** Это контракт с пайплайном алертинга.
 
 Kubernetes-рантайм пишет stdout и stderr контейнера в два файла (`*.log`), а Vector размечает каждую строку полем `stream=stdout` или `stream=stderr`. VictoriaLogs хранит `stream` как обычное поле. Если ошибки пишутся в stdout, этого сигнала нет: остаётся ловить их только по тексту.
+
+Контракт «ошибки в stderr» держится именно на сохранении этого маркера. Родной `vlagent` CRI-маркер `stdout`/`stderr` разбирает, но выбрасывает ([VictoriaMetrics/VictoriaLogs#1790](https://github.com/VictoriaMetrics/VictoriaLogs/issues/1790)) — поля `stream` в логах не появляется, и любое правило вынуждено гонять регулярку по всему потоку `stdout`+`stderr`. Поэтому здесь сбор логов отдан Vector: он сохраняет `stream` как поле, и разделение `stdout`/`stderr` остаётся поисковым фильтром, а не пустой договорённостью.
 
 В LogsQL регулярка по сообщению (`_msg:~"panic:"`) — самая дорогая операция: она читает тело каждой строки. Фильтр по полю (`stream:=stderr`) и по лейблу (`kubernetes.pod_labels.app:=...`) — отбор по уже проиндексированным значениям, он дёшев. Порядок: сначала app и stream, потом регулярка по оставшимся строкам. Без `stream:=stderr` регулярка шла бы по всему stdout — info/debug на каждый запуск правила.
 
