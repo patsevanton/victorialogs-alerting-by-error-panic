@@ -17,22 +17,7 @@ vlagent не используем из-за [VictoriaMetrics/VictoriaLogs#1790](
 - **Правила живут в коде, а не в Grafana UI** — почему, разберём в Шаге 1;
 - **Alertmanager шлёт алерты в Telegram** нативным `telegram_configs` (Шаг 6).
 
-```mermaid
-flowchart TD
-    Go["golang-app<br/>(panic, fatal, error)"] -->|stdout + stderr| Vector["Vector (DaemonSet)"]
-    Nuxt["nuxt-app<br/>(500, unhandled)"] -->|stderr| Vector
-    Vector -->|elasticsearch bulk<br/>/insert/elasticsearch/| VL[("VictoriaLogs<br/>vls-server:9428")]
-
-    VL -->|LogsQL| VMA["vmalert-logs (VMAlert)<br/>rules: VMRule vmalert-rules"]
-    VMA -->|ALERTS state| VMSingle[("vmsingle (VictoriaMetrics)<br/>8428")]
-    VMA -->|notify| AM["Alertmanager"]
-    AM -->|telegram_configs| TG["Telegram"]
-
-    Grafana["Grafana"] -->|datasource| VL
-
-    VL -->|/metrics| VMAgent["vmagent"]
-    VMAgent -->|remoteWrite| VMSingle
-```
+![Архитектура](архитектура.png)
 
 Поток данных:
 
