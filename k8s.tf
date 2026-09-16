@@ -173,3 +173,8 @@ output "alertmanager_url" {
   description = "URL Alertmanager UI"
   value       = "http://alertmanager.${local.ingress_public_ip}.sslip.io"
 }
+
+output "vmui_url" {
+  description = "URL vmui (Web UI VictoriaLogs, на корне /select/vmui)"
+  value       = "http://${local.vmui_fqdn}/select/vmui"
+}
