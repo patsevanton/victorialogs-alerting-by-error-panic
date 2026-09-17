@@ -344,6 +344,10 @@ Kubernetes-рантайм пишет stdout и stderr контейнера в д
 
 Отбор по полям и по `_stream` VictoriaLogs делает по индексам/блокам стримов почти бесплатно; регулярка — CPU на распаковку и сравнение текста. Поэтому в Шаге 5 `stream:=stderr` стоит перед `_msg:~"..."` , а `stats` — в конце, когда агрегировать уже почти нечего.
 
+Чтобы понять наглядко сколько нужно прочитать логов в stdout и сколько нужно прочитать логов в stderr сделаем примерную картину:
+
+![Поиск ошибок по stdout и stderr](stdout-stderr.png)
+
 ## Шаг 5. Правила алертов в VMRule
 
 Правила — два CRD `VMRule` по приложениям ([`manifests/vmalert-rules-golang.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-golang.yaml) и [`manifests/vmalert-rules-nuxt.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-nuxt.yaml)). Их исполняет `vmalert-logs` (Шаг 3). Разбиение по файлу упрощает ревью и CODEOWNERS. Оба `VMRule` уже применены в конце Шага 3; ниже — разбор содержимого.
