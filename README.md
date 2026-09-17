@@ -56,6 +56,8 @@ helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-m
   --wait --values values/vmks-values.yaml
 ```
 
+Файл `values/vmks-values.yaml` (фрагмент):
+
 ```yaml
 # vmalert (встроенный) исполняет PromQL-правила против vmsingle
 # (datasource чарт подставляет сам из vmsingle). Он берёт все VMRule в
@@ -163,6 +165,8 @@ helm upgrade --install vls vm/victoria-logs-single \
   --values values/vls-values.yaml
 ```
 
+Файл `values/vls-values.yaml`:
+
 ```yaml
 # VictoriaLogs single-node.
 nameOverride: vls
@@ -188,6 +192,8 @@ helm upgrade --install vector vector/vector \
   --version 0.58.0 \
   --values values/vector-values.yaml
 ```
+
+Файл `values/vector-values.yaml`:
 
 ```yaml
 # Vector (DaemonSet, роль Agent) собирает логи всех подов и шлёт в VictoriaLogs.
@@ -242,6 +248,8 @@ Vector не умеет нативный протокол vlagent (`/insert/nativ
 ### vmalert-logs и правила VMRule
 
 Отдельный `VMAlert` `vmalert-logs` под LogsQL объявлен манифестом [`manifests/vmalert-logs.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-logs.yaml):
+
+Файл `manifests/vmalert-logs.yaml`:
 
 ```yaml
 apiVersion: operator.victoriametrics.com/v1beta1
@@ -408,6 +416,8 @@ Kubernetes-рантайм пишет stdout и stderr контейнера в д
 
 Правила — два CRD `VMRule` по приложениям ([`manifests/vmalert-rules-golang.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-golang.yaml) и [`manifests/vmalert-rules-nuxt.yaml`](https://github.com/patsevanton/victorialogs-alerting-by-error-panic/blob/main/manifests/vmalert-rules-nuxt.yaml)). Их исполняет `vmalert-logs` (Шаг 3). Разбиение по файлу упрощает ревью и CODEOWNERS. Оба `VMRule` уже применены в конце Шага 3; ниже — разбор содержимого.
 
+Файл `manifests/vmalert-rules-golang.yaml`:
+
 ```yaml
 apiVersion: operator.victoriametrics.com/v1beta1
 kind: VMRule
@@ -502,6 +512,8 @@ spec:
 ```
 
 У nuxt-app та же схема пайпа (`_time` → app → `stream:=stderr` → `_msg` → `stats` → `filter`), другие маркеры и окна `for`:
+
+Файл `manifests/vmalert-rules-nuxt.yaml`:
 
 ```yaml
 apiVersion: operator.victoriametrics.com/v1beta1
@@ -660,8 +672,9 @@ _time: 2m — окно минимально, повторяется только
 
 Токен кладём в Secret, в конфиг передаём путь через `bot_token_file` — токен не светится в конфиге.
 
+Файл `telegram-bot-token-secret.yaml`:
+
 ```yaml
-# telegram-bot-token-secret.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -673,6 +686,8 @@ data:
 ```
 
 В vmks-values (см. Шаг 1) подключаем Secret к Alertmanager. Служебные алерты vmks (`Watchdog`, `InfoInhibitor`, `RecordingRulesNoData`) уходят в `null`-ресивер и в Telegram не шлются:
+
+Файл `values/vmks-values.yaml` (фрагмент):
 
 ```yaml
 alertmanager:
