@@ -5,11 +5,6 @@
 Начато, но не завершено. README-фрагменты разошлись с актуальными файлами
 проекта (`values/*.yaml`, `manifests/*.yaml`). Что осталось сделать:
 
-- [ ] Синхронизировать `_stream_fields` и `ignore_fields` Vector в README с
-  `values/vector-values.yaml`: актуальный набор
-  `kubernetes.pod_namespace,kubernetes.container_name` (без `kubernetes.pod_name`),
-  `ignore_fields` из файла убран.
-
 - [ ] Показать в Шаге 1 полный `vmks-values.yaml`: `grafana` (plugins/ingress),
   `defaultDatasources` (VictoriaLogs), отключение control-plane
   (`kubeControllerManager`/`kubeScheduler`/`kubeEtcd`/`defaultRules.groups`),
@@ -18,10 +13,6 @@
 - [ ] Актуализировать блок `alertmanager` в Шаге 6: добавить `secrets`,
   `ingress`, `global.http_config.proxy_from_environment`; НЕ упоминать
   mihomo-прокси (`extraEnvs`) — правило проекта запрещает его в README.
-
-- [ ] Добавить `annotations` (summary/description) к правилам `GolangFatalLog`
-  и `GolangErrorLog` в Шаге 5 — в `manifests/vmalert-rules-golang.yaml` они уже
-  есть, в README отсутствуют.
 
 - [ ] Добавить полный YAML-блок `VMRule` nuxt в Шаг 5
   (`manifests/vmalert-rules-nuxt.yaml`) вместо bullet-списка.
