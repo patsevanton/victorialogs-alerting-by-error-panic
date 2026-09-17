@@ -56,10 +56,12 @@ helm upgrade --install vmks oci://ghcr.io/victoriametrics/helm-charts/victoria-m
   --wait --values values/vmks-values.yaml
 ```
 
-Встроенный `vmalert` остаётся на PromQL. LogsQL-правила он не должен трогать — исключаем лейбл `type: logs-to-metrics`:
-
 ```yaml
-# LogsQL-правила исполняет отдельный VMAlert (manifests/vmalert-logs.yaml).
+# vmalert (встроенный) исполняет PromQL-правила против vmsingle
+# (datasource чарт подставляет сам из vmsingle). Он берёт все VMRule в
+# namespace vmalert'а, кроме LogsQL-правил (label type: logs-to-metrics) —
+# их исполняет отдельный VMAlert (manifests/vmalert-logs.yaml). Так кастомный
+# PromQL-VMRule, созданный вручную без специальных лейблов, подхватывается сам.
 vmalert:
   enabled: true
   spec:
@@ -72,9 +74,63 @@ vmalert:
             - logs-to-metrics
     # Как часто встроенный vmalert исполняет группы PromQL-правил: раз в минуту.
     evaluationInterval: 1m
+
+alertmanager:
+  enabled: true
+  spec:
+    # Secret telegram-bot-token монтируется оператором в
+    # /etc/vm/secrets/telegram-bot-token/bot-token.
+    secrets:
+      - telegram-bot-token
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    hosts:
+      - ${alertmanager_fqdn}
+  config:
+    global:
+      resolve_timeout: 5m
+      http_config:
+        proxy_from_environment: true
+    route:
+      receiver: telegram
+      group_by: ["alertname", "app"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      # Watchdog, InfoInhibitor и RecordingRulesNoData — служебные алерты vmks:
+      # выполняют свою работу, но в Telegram не шлются. RecordingRulesNoData
+      # шумит, когда recording-правило count:up0 отдаёт 0 семплов — это здоровое
+      # состояние (нет упавших таргетов), а не проблема.
+      routes:
+        - matchers:
+            - alertname="Watchdog"
+          receiver: "null"
+        - matchers:
+            - alertname="InfoInhibitor"
+          receiver: "null"
+    receivers:
+      - name: "null"
+      - name: telegram
+        telegram_configs:
+          - bot_token_file: /etc/vm/secrets/telegram-bot-token/bot-token
+            chat_id: ${telegram_chat_id}
+            parse_mode: HTML
+            send_resolved: true
+            message: |-
+              {{- range .Alerts }}
+              <b>{{ .Status | toUpper }}</b> <code>{{ .Labels.alertname }}</code>
+              app: <code>{{ .Labels.app }}</code>
+              {{- if .Annotations.summary }}
+              {{ .Annotations.summary }}
+              {{- end }}
+              {{- if .Annotations.description }}
+              {{ .Annotations.description }}
+              {{- end }}
+              {{ end }}
 ```
 
-`ruleSelector` с `NotIn` оставляет дефолтные PromQL-правила стека и кастомные PromQL-`VMRule` без специальных лейблов. `vmsingle` и `alertmanager` включены по дефолту чарта: `vmalert-logs` пишет состояние алертов в `vmsingle`, уведомления уходят через `alertmanager` (Шаги 3 и 6).
+`ruleSelector` с `NotIn` оставляет дефолтные PromQL-правила стека и кастомные PromQL-`VMRule` без специальных лейблов. `vmsingle` и `alertmanager` включены по дефолту чарта: `vmalert-logs` пишет состояние алертов в `vmsingle`, уведомления уходят через `alertmanager` (Шаги 3 и 6). Блок `alertmanager` подробнее разобран в Шаге 6.
 
 ### Почему алерты по логам не делаем через Grafana UI
 
@@ -112,7 +168,7 @@ helm upgrade --install vls vm/victoria-logs-single \
 nameOverride: vls
 
 server:
-  # /metrics VictoriaLogs -> vmagent из vmks -> vmsingle.
+  # VictoriaLogs отдаёт собственные метрики на /metrics.
   vmServiceScrape:
     enabled: true
 ```
@@ -447,8 +503,105 @@ spec:
 
 У nuxt-app та же схема пайпа (`_time` → app → `stream:=stderr` → `_msg` → `stats` → `filter`), другие маркеры и окна `for`:
 
-- `NuxtServerError` (`NUXT_ERROR`, `for: 2m`), `NuxtBadGateway` (`NUXT_502`, `for: 2m`) — warning;
-- `NuxtUnhandledRejection` (`NUXT_UNHANDLED`), `NuxtUnhandledPromiseRejection` (`NUXT_REJECTION`), `NuxtFatalLog` (`NUXT_FATAL`) — critical, `for: 1m`.
+```yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: vmalert-rules-nuxt
+  namespace: vmks
+  labels:
+    type: logs-to-metrics
+spec:
+  groups:
+    - name: nuxt-app
+      type: vlogs
+      # Как часто выполняется LogsQL-запрос этой группы: раз в минуту.
+      # Переопределяет evaluationInterval из VMAlert.
+      interval: 1m
+      rules:
+        - alert: NuxtServerError
+          expr: |
+            _time: 2m
+              | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
+              | _msg:~"NUXT_ERROR"
+              | stats count() as errors
+              | filter errors:>0
+          for: 2m
+          labels:
+            severity: warning
+            app: nuxt-app
+          annotations:
+            summary: "500 в nuxt-app"
+            description: "Серверных ошибок (500) в nuxt-app за 2m: {{ $value }}."
+
+        - alert: NuxtUnhandledRejection
+          expr: |
+            _time: 2m
+              | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
+              | _msg:~"NUXT_UNHANDLED"
+              | stats count() as unhandled
+              | filter unhandled:>0
+          for: 1m
+          labels:
+            severity: critical
+            app: nuxt-app
+          annotations:
+            summary: "необработанное исключение в nuxt-app"
+            description: |
+              Необработанных исключений в nuxt-app за 2m: {{ $value }}.
+
+        - alert: NuxtUnhandledPromiseRejection
+          expr: |
+            _time: 2m
+              | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
+              | _msg:~"NUXT_REJECTION"
+              | stats count() as rejections
+              | filter rejections:>0
+          for: 1m
+          labels:
+            severity: critical
+            app: nuxt-app
+          annotations:
+            summary: "необработанный promise rejection в nuxt-app"
+            description: |
+              Необработанных promise rejection в nuxt-app за 2m: {{ $value }}.
+
+        - alert: NuxtFatalLog
+          expr: |
+            _time: 2m
+              | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
+              | _msg:~"NUXT_FATAL"
+              | stats count() as fatals
+              | filter fatals:>0
+          for: 1m
+          labels:
+            severity: critical
+            app: nuxt-app
+          annotations:
+            summary: "fatal в nuxt-app"
+            description: |
+              Вызов process.exit в nuxt-app. Фаталов за 2m: {{ $value }}.
+
+        - alert: NuxtBadGateway
+          expr: |
+            _time: 2m
+              | kubernetes.pod_labels.app:=nuxt-app
+              | stream:=stderr
+              | _msg:~"NUXT_502"
+              | stats count() as badgateways
+              | filter badgateways:>0
+          for: 2m
+          labels:
+            severity: warning
+            app: nuxt-app
+          annotations:
+            summary: "502 в nuxt-app"
+            description: "Ответов 502 в nuxt-app за 2m: {{ $value }}."
+```
 
 Разбор LogsQL-выражения:
 
@@ -574,6 +727,8 @@ alertmanager:
 - `chat_id` — ID чата/группы (отрицательное число для групп); подставляется Terraform'ом через `${telegram_chat_id}`;
 - `parse_mode: HTML` — разметка сообщения;
 - `send_resolved: true` — уведомление и при разрешении алерта.
+
+`secrets` монтирует Secret в под Alertmanager (оператор кладёт файл в `/etc/vm/secrets/telegram-bot-token/bot-token`).
 
 В Telegram приходят алерты:
 
