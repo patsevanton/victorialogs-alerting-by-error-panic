@@ -1,14 +1,16 @@
 locals {
-  # Namespace, где живёт весь стек (VictoriaLogs, Vector, vmks, vmalert).
+  # Namespace стека VictoriaMetrics/VictoriaLogs (vmks, vmalert). Vector — в ns vector.
   monitoring_namespace = "vmks"
 
   # Имя VictoriaLogs single-node и внутренний URL read-эндпоинта (:9428).
   vls_name_override = "vls"
   vls_server_url    = "http://vls-server.${local.monitoring_namespace}.svc.cluster.local:9428"
 
-  # FQDN Grafana и Alertmanager формируются из публичного IP Traefik через sslip.io.
+  # FQDN Grafana, Alertmanager и vmui VictoriaLogs формируются из публичного IP
+  # Traefik через sslip.io.
   grafana_fqdn      = "grafana.${local.ingress_public_ip}.sslip.io"
   alertmanager_fqdn = "alertmanager.${local.ingress_public_ip}.sslip.io"
+  vmui_fqdn         = "vls.${local.ingress_public_ip}.sslip.io"
 
   # ----- VictoriaLogs single-node (victoria-logs-single) -----
   # vmks ставится первым: vmServiceScrape (см. vls-values.yaml.tftpl) уводит
@@ -27,6 +29,7 @@ locals {
 
   vls_values = templatefile("${path.module}/values/vls-values.yaml.tftpl", {
     vls_name_override = local.vls_name_override
+    vmui_fqdn         = local.vmui_fqdn
   })
 
   vector_values = templatefile("${path.module}/values/vector-values.yaml.tftpl", {

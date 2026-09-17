@@ -1,7 +1,5 @@
 # Алерты по ошибкам и panic из логов приложений: VictoriaLogs + vmalert + Alertmanager → Telegram
 
-vlagent не используем из-за [VictoriaMetrics/VictoriaLogs#1790](https://github.com/VictoriaMetrics/VictoriaLogs/issues/1790) — вместо него логи собирает Vector.
-
 ## Введение
 
 Классическая ситуация: Go-сервис падает с `panic: runtime error: invalid memory address or nil pointer dereference`, Nuxt-фронтенд логирует `NUXT_UNHANDLED: unhandled rejection`. Клиент видит лишь общее «что-то сломалось» — точный текст ошибки остаётся только в логах.
@@ -164,9 +162,13 @@ customConfig:
       query:
         _msg_field: message
         _time_field: timestamp
+        _stream_fields: kubernetes.pod_namespace,kubernetes.container_name
+        ignore_fields: file,source_type,kubernetes.container_id,kubernetes.container_image_id,kubernetes.pod_ip,kubernetes.pod_ips,kubernetes.pod_uid,kubernetes.node_labels.*,kubernetes.pod_annotations.*,kubernetes.namespace_labels.*
 ```
 
 `query._msg_field: message` и `query._time_field: timestamp` маппят поля Vector на спецполя VictoriaLogs: текст берётся из `message`, время — из `timestamp`. После этого в VictoriaLogs `_msg` и `_time` заполнены так же, как при vlagent, а `stream`, `kubernetes.pod_labels.*` и `kubernetes.pod_name` Vector отдаёт как есть — поэтому правила `VMRule` из Шага 5 не меняются.
+
+`_stream_fields` задаёт поток VictoriaLogs (без него все строки попадают в `_stream: {}`). `ignore_fields` отбрасывает шум Vector: `file`, `source_type`, id контейнера/пода, `node_labels.*`, `pod_annotations.*`.
 
 Логи самого коллектора не собираются: чарт ставит поду лейбл `vector.dev/exclude: "true"`, а source `kubernetes_logs` по умолчанию пропускает поды с этим лейблом.
 
@@ -227,13 +229,13 @@ kubectl apply -f manifests/vmalert-rules-nuxt.yaml
 
 | Эндпоинт  | Что происходит в проде                        | Что ловится |
 | --------- | --------------------------------------------- | ----------- |
-| `/panic`  | `panic("boom: ...")` с `recover` в `defer`    | `ERROR` |
-| `/nil`    | nil pointer dereference (runtime-паника, без recover) | `panic:` |
-| `/index`  | index out of range (runtime-паника)           | `panic:` |
-| `/fatal`  | `errLog.Fatalf("FATAL: ...")` → `os.Exit(1)`  | `FATAL` |
-| `/error`  | лог `ERROR: failed to connect ...`, ответ 502 | `ERROR` |
+| `/panic`  | `panic("boom: ...")` с `recover` в `defer`, лог `ERROR: recovered panic ...` | `GolangRecoveredPanic` |
+| `/nil`    | nil pointer dereference (runtime-паника, без recover) | `GolangPanicDetected` |
+| `/index`  | index out of range (runtime-паника)           | `GolangPanicDetected` |
+| `/fatal`  | `errLog.Fatalf("FATAL: ...")` → `os.Exit(1)`  | `GolangFatalLog` |
+| `/error`  | лог `ERROR: failed to connect ...`, ответ 502 | `GolangErrorLog` |
 
-**`panic:` есть у runtime-паник** (`nil pointer dereference`, `index out of range`) — одно правило `_msg:~"panic:"` ловит оба. Явный `panic("...")` с `recover` в этом приложении уходит в `ERROR: recovered panic ...` и его ловит правило по `ERROR`. `log.Fatal` пишет сообщение и завершает процесс; pod перезапускается, лог остаётся в VictoriaLogs, его ловит правило по `FATAL`.
+**Runtime-паники** (`nil pointer dereference`, `index out of range`) Go печатает как `http: panic serving ...: runtime error: ...` — двоеточия после `panic` там нет, поэтому правило `GolangPanicDetected` матчит `_msg:~"runtime error"`, а не `panic:`. Явный `panic("...")` с `recover` уходит в `ERROR: recovered panic ...`: на него заведено отдельное правило `GolangRecoveredPanic`, а из `GolangErrorLog` такие строки исключены (`NOT _msg:~"recovered panic"`) — каждое сообщение даёт ровно один алерт. `log.Fatal` пишет сообщение и завершает процесс; pod перезапускается, лог остаётся в VictoriaLogs, его ловит `GolangFatalLog`.
 
 ```go
 // main.go — фрагмент
@@ -321,7 +323,7 @@ kubectl apply -f manifests/nuxt-app.yaml
 
 Kubernetes-рантайм пишет stdout и stderr контейнера в два файла (`*.log`), а Vector размечает каждую строку полем `stream=stdout` или `stream=stderr`. VictoriaLogs хранит `stream` как обычное поле. Если ошибки пишутся в stdout, этого сигнала нет: остаётся ловить их только по тексту.
 
-В LogsQL регулярка по сообщению (`_msg:~"panic:"`) — самая дорогая операция: она читает тело каждой строки. Фильтр по полю (`stream:=stderr`) и по лейблу (`kubernetes.pod_labels.app:=...`) — отбор по уже проиндексированным значениям, он дёшев. Порядок: сначала app и stream, потом регулярка по оставшимся строкам. Без `stream:=stderr` регулярка шла бы по всему stdout — info/debug на каждый запуск правила.
+В LogsQL регулярка по сообщению (`_msg:~"panic"`) — самая дорогая операция: она читает тело каждой строки. Фильтр по полю (`stream:=stderr`) и по лейблу (`kubernetes.pod_labels.app:=...`) — отбор по уже проиндексированным значениям, он дёшев. Порядок: сначала app и stream, потом регулярка по оставшимся строкам. Без `stream:=stderr` регулярка шла бы по всему stdout — info/debug на каждый запуск правила.
 
 ### Примерная разница в нагрузке на VictoriaLogs
 
@@ -363,11 +365,14 @@ spec:
       interval: 1m
       rules:
         - alert: GolangPanicDetected
+          # Runtime-паники (`nil pointer dereference`, `index out of range`)
+          # Go пишет как `http: panic serving ...: runtime error: ...` — без
+          # двоеточия после panic, поэтому ловим по `runtime error`.
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=golang-app
               | stream:=stderr
-              | _msg:~"panic:"
+              | _msg:~"runtime error"
               | stats by (kubernetes.pod_name) count() as panics
               | filter panics:>0
           for: 1m
@@ -375,9 +380,29 @@ spec:
             severity: critical
             app: golang-app
           annotations:
-            summary: "panic в golang-app"
+            summary: "runtime panic в golang-app"
             description: |
-              Паник у пода {{ index $labels "kubernetes.pod_name" }} за 2m: {{ $value }}.
+              Runtime-паник у пода {{ index $labels "kubernetes.pod_name" }} за 2m: {{ $value }}.
+
+        - alert: GolangRecoveredPanic
+          # panic("..."), перехваченный recover: приложение живёт, но в stderr
+          # уходит `ERROR: recovered panic ...`. Отдельный алерт, чтобы
+          # GolangErrorLog не дублировал его.
+          expr: |
+            _time: 2m
+              | kubernetes.pod_labels.app:=golang-app
+              | stream:=stderr
+              | _msg:~"recovered panic"
+              | stats by (kubernetes.pod_name) count() as recovered
+              | filter recovered:>0
+          for: 1m
+          labels:
+            severity: critical
+            app: golang-app
+          annotations:
+            summary: "recovered panic в golang-app"
+            description: |
+              Перехваченных panic (recover) у пода {{ index $labels "kubernetes.pod_name" }} за 2m: {{ $value }}.
 
         - alert: GolangFatalLog
           expr: |
@@ -391,19 +416,29 @@ spec:
           labels:
             severity: critical
             app: golang-app
+          annotations:
+            summary: "log.Fatal в golang-app"
+            description: |
+              Вызов log.Fatalf в golang-app. Фаталов за 2m: {{ $value }}.
 
         - alert: GolangErrorLog
+          # NOT _msg:~"recovered panic" исключает /panic: его ведёт
+          # GolangRecoveredPanic, иначе одно событие давало бы два алерта.
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=golang-app
               | stream:=stderr
               | _msg:~"ERROR"
+              | NOT _msg:~"recovered panic"
               | stats count() as errors
               | filter errors:>0
           for: 2m
           labels:
             severity: warning
             app: golang-app
+          annotations:
+            summary: "ошибка в golang-app"
+            description: "Ошибок в логах golang-app за 2m: {{ $value }}."
 ```
 
 У nuxt-app та же схема пайпа (`_time` → app → `stream:=stderr` → `_msg` → `stats` → `filter`), другие маркеры и окна `for`:
@@ -416,7 +451,7 @@ spec:
 - `_time: 2m` — окно выборки: события за последние 2 минуты;
 - `kubernetes.pod_labels.app:=golang-app` — фильтр по лейблу пода (добавил Vector);
 - `stream:=stderr` — только stderr, куда приложение пишет ошибки;
-- `_msg:~"panic:"` — регулярка по тексту;
+- `_msg:~"panic"` — регулярка по тексту;
 - `stats by (kubernetes.pod_name) count() as panics` — число совпадений по поду;
 - `filter panics:>0` — только группы, где сработало.
 

@@ -9,3 +9,13 @@ server:
   # в vmsingle. Поэтому vmks должен быть уже поднят до установки VictoriaLogs.
   vmServiceScrape:
     enabled: true
+
+  # vmui (Web UI VictoriaLogs) наружу через Traefik по sslip.io.
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    hosts:
+      - name: ${vmui_fqdn}
+        path:
+          - /
+        port: http

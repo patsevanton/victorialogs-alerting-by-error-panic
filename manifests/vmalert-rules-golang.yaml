@@ -14,15 +14,19 @@ spec:
       interval: 1m
       rules:
         - alert: GolangPanicDetected
-          # "panic:" есть и у явного panic("..."), и у runtime-паник
-          # (nil pointer dereference, index out of range) — ловим все разом.
+          # Runtime-паники (`nil pointer dereference`, `index out of range`)
+          # Go пишет как `http: panic serving ...: runtime error: ...` — без
+          # двоеточия после panic, поэтому ловим по `runtime error`.
+          # Явный panic("...") с recover даёт `ERROR: recovered panic ...` и
+          # ловится отдельным GolangRecoveredPanic. Так каждое сообщение даёт
+          # ровно один алерт, без пересечений.
           # stream:=stderr отсекает обычные stdout-логи ещё до дорогой
           # регулярки: ошибки по контракту всегда пишутся в stderr.
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=golang-app
               | stream:=stderr
-              | _msg:~"panic:"
+              | _msg:~"runtime error"
               | stats by (kubernetes.pod_name) count() as panics
               | filter panics:>0
           for: 1m
@@ -30,10 +34,30 @@ spec:
             severity: critical
             app: golang-app
           annotations:
-            summary: "panic в golang-app"
+            summary: "runtime panic в golang-app"
             description: |
-              Паник у пода {{ index $labels "kubernetes.pod_name" }} за 2m: {{ $value }}.
+              Runtime-паник у пода {{ index $labels "kubernetes.pod_name" }} за 2m: {{ $value }}.
               Логи: Kubernetes -> Vector -> VictoriaLogs.
+
+        - alert: GolangRecoveredPanic
+          # panic("..."), перехваченный recover на /panic: приложение живёт,
+          # но в stderr уходит `ERROR: recovered panic ...`. Отдельный алерт,
+          # чтобы класс сбоя был виден, а GolangErrorLog не дублировал его.
+          expr: |
+            _time: 2m
+              | kubernetes.pod_labels.app:=golang-app
+              | stream:=stderr
+              | _msg:~"recovered panic"
+              | stats by (kubernetes.pod_name) count() as recovered
+              | filter recovered:>0
+          for: 1m
+          labels:
+            severity: critical
+            app: golang-app
+          annotations:
+            summary: "recovered panic в golang-app"
+            description: |
+              Перехваченных panic (recover) у пода {{ index $labels "kubernetes.pod_name" }} за 2m: {{ $value }}.
 
         - alert: GolangFatalLog
           expr: |
@@ -53,11 +77,15 @@ spec:
               Вызов log.Fatalf в golang-app. Фаталов за 2m: {{ $value }}.
 
         - alert: GolangErrorLog
+          # NOT _msg:~"recovered panic" исключает /panic (там сообщение
+          # начинается с "ERROR: recovered panic"): его ведёт GolangRecoveredPanic,
+          # иначе одно событие давало бы два алерта сразу.
           expr: |
             _time: 2m
               | kubernetes.pod_labels.app:=golang-app
               | stream:=stderr
               | _msg:~"ERROR"
+              | NOT _msg:~"recovered panic"
               | stats count() as errors
               | filter errors:>0
           for: 2m
